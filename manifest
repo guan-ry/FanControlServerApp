@@ -1,11 +1,13 @@
 appname               = FanControlServer
-version               = 1.0.0
+version               = 1.0.1
 display_name          = Fan Control Server
-desc                  = <b>FanControlServer</b> 是一款智能风扇与温度管理工具，专为飞牛私有云及 Linux 服务器设计。<br><br>📁 <b>风扇控制：</b><br>- 独立设置每个风扇的智能温控曲线<br>- 手动/自动模式随时切换，支持 0‑255 精确 PWM 值<br>- 自动扫描硬件 PWM 通道，支持多风扇管理<br><br>🌡️ <b>硬件监控：</b><br>- 实时 CPU/GPU/内存/硬盘温度及使用率<br>- 支持 NVMe/SATA 硬盘温度读取<br>- 历史温度曲线图表（ECharts）<br><br>🔔 <b>安全机制：</b><br>- 可配置过热阈值，超限强制全速运转<br>- 停转温差防止频繁启停<br>- 进程退出行为可选（保持当前或指定 PWM）<br><br>⚙️ <b>其他特点：</b><br>- 响应式 Web 界面，深色主题<br>- WebSocket 实时推送，无需手动刷新<br>- 默认 HTTP 端口：19527<br><br>
+desc                  = <b>FanControlServer</b> 是一款智能风扇与温度管理工具，专为飞牛私有云及 Linux 服务器设计。<br><br>📁 <b>风扇控制：</b><br>- 独立设置每个风扇的智能温控曲线<br>- 手动/自动模式随时切换，支持 0‑255 精确 PWM 值<br>- 自动扫描硬件 PWM 通道，支持多风扇管理<br><br>🌡️ <b>硬件监控：</b><br>- 实时 CPU/GPU/内存/硬盘温度及使用率<br>- 支持 NVMe/SATA 硬盘温度读取<br>- 历史温度曲线图表（ECharts）<br><br>🔔 <b>安全机制：</b><br>- 可配置过热阈值，超限强制全速运转<br>- 停转温差防止频繁启停<br>- 进程退出行为可选（保持当前或指定 PWM）<br><br>⚙️ <b>其他特点：</b><br>- 响应式 Web 界面，深色主题<br>- WebSocket 实时推送，无需手动刷新<br>- 默认 HTTP 端口：19527<br><br>🐛 <b>反馈与支持：</b><a href="https://github.com/guan-ry/FanControlServerApp/issues" target="_blank">GitHub Issues</a>
 platform              = x86
 source                = thirdparty
-maintainer            = gry
-distributor           = gry
+maintainer            = guan-ry
+maintainer_url        = https://github.com/guan-ry
+distributor           = guan-ry
+distributor_url       = https://github.com/guan-ry
 desktop_uidir         = ui
 desktop_applaunchname = FanControlServer.Application
 service_port          = 19527
