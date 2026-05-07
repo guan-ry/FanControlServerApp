@@ -48,18 +48,24 @@ type FanConfig struct {
 }
 
 type GlobalConfig struct {
-	PWMDeadzone      int          `json:"pwm_deadzone"`
-	UpdateIntervalMS int          `json:"update_interval_ms"`
-	EmergencyTemp    float64      `json:"emergency_temp"`
-	StopBehavior     StopBehavior `json:"stop_behavior"`
-	StopPWM          int          `json:"stop_pwm"`
-	StopHysteresis   float64      `json:"stop_hysteresis"` // 停转滞回温度（°C）
-	LogLevel         string       `json:"log_level"`
+	PWMDeadzone      int               `json:"pwm_deadzone"`
+	UpdateIntervalMS int               `json:"update_interval_ms"`
+	EmergencyTemp    float64           `json:"emergency_temp"`
+	StopBehavior     StopBehavior      `json:"stop_behavior"`
+	StopPWM          int               `json:"stop_pwm"`
+	StopHysteresis   float64           `json:"stop_hysteresis"` // 停转滞回温度（°C）
+	LogLevel         string            `json:"log_level"`
+	SourceMode       string            `json:"source_mode,omitempty"`    // 温度源选择模式：simple（小白）/ advanced（极客）
+	SensorAliases    map[string]string `json:"sensor_aliases,omitempty"` // 传感器ID → 用户别名
+	SensorHidden     []string          `json:"sensor_hidden,omitempty"`  // 隐藏的传感器ID列表
 }
 
+const CurrentConfigVersion = 1
+
 type Config struct {
-	Fans   []FanConfig  `json:"fans"`
-	Global GlobalConfig `json:"global"`
+	Version int          `json:"version"`
+	Fans    []FanConfig  `json:"fans"`
+	Global  GlobalConfig `json:"global"`
 }
 
 type DiskInfo struct {
@@ -85,16 +91,26 @@ type FanRuntime struct {
 }
 
 type Telemetry struct {
-	CPUTemp   *float64      `json:"cpu_temp,omitempty"`
-	CPUUsage  float64       `json:"cpu_usage"`
-	MemUsage  float64       `json:"mem_usage"`
-	MemTotal  *float64      `json:"mem_total,omitempty"`
-	GPUTemp   *float64      `json:"gpu_temp,omitempty"`
-	Uptime    int64         `json:"uptime"`
-	Disks     DiskPayload   `json:"disks"`
-	Fans      []FanRuntime  `json:"fans"`
-	Timestamp time.Time     `json:"timestamp"`
-	History   HistorySeries `json:"history"`
+	CPUTemp   *float64        `json:"cpu_temp,omitempty"`
+	CPUUsage  float64         `json:"cpu_usage"`
+	MemUsage  float64         `json:"mem_usage"`
+	MemTotal  *float64        `json:"mem_total,omitempty"`
+	GPUTemp   *float64        `json:"gpu_temp,omitempty"`
+	Uptime    int64           `json:"uptime"`
+	Disks     DiskPayload     `json:"disks"`
+	Fans      []FanRuntime    `json:"fans"`
+	Sensors   []SensorReading `json:"sensors"`
+	Timestamp time.Time       `json:"timestamp"`
+	History   HistorySeries   `json:"history"`
+}
+
+type SensorReading struct {
+	ID     string   `json:"id"`               // chip/device/key，全局稳定 ID
+	Chip   string   `json:"chip"`             // 来自 hwmonX/name
+	Device string   `json:"device,omitempty"` // 来自 hwmonX/device 软链终端：nvme0、sda、PCI 地址等
+	Key    string   `json:"key"`              // 例：temp1
+	Label  string   `json:"label"`            // 来自 tempN_label，可能为空
+	Temp   *float64 `json:"temp,omitempty"`
 }
 
 type HistoryPoint struct {

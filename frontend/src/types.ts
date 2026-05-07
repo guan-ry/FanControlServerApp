@@ -32,6 +32,18 @@ export interface GlobalConfig {
     stop_pwm: number;
     stop_hysteresis: number;
     log_level: string;
+    source_mode?: "simple" | "advanced";
+    sensor_aliases?: Record<string, string>;
+    sensor_hidden?: string[];
+}
+
+export interface SensorReading {
+    id: string;
+    chip: string;
+    device?: string;
+    key: string;
+    label: string;
+    temp?: number;
 }
 
 export interface ConfigPayload {
@@ -78,6 +90,7 @@ export interface Telemetry {
         details: DiskInfo[];
     };
     fans: FanRuntime[];
+    sensors: SensorReading[];
     timestamp: string;
     uptime?: number;  // 系统运行时间（秒）
     history: {

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +34,8 @@ type Controller struct {
 	lastGPUHistoryTime  time.Time // GPU 历史上次记录时间
 	lastDiskHistoryTime time.Time // 磁盘历史上次记录时间
 	lastFanHistoryTime  time.Time // 风扇历史上次记录时间
+	sensorChans         []driver.TempChannel // 缓存 hwmon 温度通道列表
+	lastSensorScan      time.Time            // 上次扫描时间
 }
 
 func NewController(store *Store) *Controller {
@@ -102,10 +103,21 @@ func (c *Controller) Unsubscribe(ch chan model.Telemetry) {
 
 func (c *Controller) loop() {
 	defer close(c.loopDoneCh)
+	timer := time.NewTimer(0)
+	defer timer.Stop()
 	for {
+		select {
+		case <-timer.C:
+		case <-c.stopCh:
+			return
+		}
+
 		cfg := c.store.Get()
 		t := c.collectAndApply(cfg)
 		c.mu.Lock()
+		c.pushTempHistory(&c.history.CPUTemp, &c.lastCPUHistoryTime, t.Timestamp, t.CPUTemp)
+		c.pushTempHistory(&c.history.GPUTemp, &c.lastGPUHistoryTime, t.Timestamp, t.GPUTemp)
+		c.pushTempHistory(&c.history.DiskAvg, &c.lastDiskHistoryTime, t.Timestamp, t.Disks.AvgTemp)
 		t.History = c.history
 		c.telemetry = t
 		for sub := range c.subs {
@@ -117,11 +129,13 @@ func (c *Controller) loop() {
 		c.mu.Unlock()
 
 		wait := time.Duration(cfg.Global.UpdateIntervalMS) * time.Millisecond
-		select {
-		case <-time.After(wait):
-		case <-c.stopCh:
-			return
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
 		}
+		timer.Reset(wait)
 	}
 }
 
@@ -129,8 +143,7 @@ func (c *Controller) collectAndApply(cfg model.Config) model.Telemetry {
 	now := time.Now()
 	cpuTemp, _ := c.system.CPUTemp()
 	cpuUsage, _ := c.system.CPUUsage()
-	memUsage, _ := c.system.MemUsage()
-	memTotal, _ := c.system.MemTotal()
+	memUsage, memTotal, _ := c.system.MemInfo()
 	gpuTemp, _ := c.gpu.Temp()
 	logrus.Debugf("[温度] CPU=%.1f°C GPU=%.1f°C", ptrOrNil(cpuTemp), ptrOrNil(gpuTemp))
 
@@ -138,10 +151,19 @@ func (c *Controller) collectAndApply(cfg model.Config) model.Telemetry {
 	uptime := int64(now.Sub(c.startTime).Seconds())
 
 	disks := c.readDisks()
+	sensors := c.readSensors()
 	fans := make([]model.FanRuntime, 0, len(cfg.Fans))
 	for _, fan := range cfg.Fans {
-		target, controlTemp := c.calculateTargetPWM(fan, cfg.Global, cpuTemp, gpuTemp, disks)
-		applied := c.applyPWM(fan, cfg.Global, target)
+		target, controlTemp := c.calculateTargetPWM(fan, cfg.Global, cpuTemp, gpuTemp, disks, sensors)
+		var applied int
+		if target < 0 {
+			// 温度源不可用（如硬盘休眠），保持上次 PWM 不动
+			if v, ok := c.lastPWM[fan.ID]; ok {
+				applied = v
+			}
+		} else {
+			applied = c.applyPWM(fan, cfg.Global, target)
+		}
 		rpm := 0
 		if fan.RPMPath != "" {
 			if value, err := c.hwmon.ReadRPM(fan.RPMPath); err == nil {
@@ -164,15 +186,6 @@ func (c *Controller) collectAndApply(cfg model.Config) model.Telemetry {
 		_ = controlTemp
 	}
 
-	c.pushTempHistory(&c.history.CPUTemp, &c.lastCPUHistoryTime, now, cpuTemp)
-	c.pushTempHistory(&c.history.GPUTemp, &c.lastGPUHistoryTime, now, gpuTemp)
-	c.pushTempHistory(&c.history.DiskAvg, &c.lastDiskHistoryTime, now, disks.AvgTemp)
-
-	//  与 pushFanHistory 配套，前端实现后取消注释
-	// if now.Sub(c.lastFanHistoryTime) >= time.Minute {
-	// 	c.lastFanHistoryTime = now
-	// }
-
 	return model.Telemetry{
 		CPUTemp:   cpuTemp,
 		CPUUsage:  round(cpuUsage),
@@ -182,9 +195,34 @@ func (c *Controller) collectAndApply(cfg model.Config) model.Telemetry {
 		Uptime:    uptime,
 		Disks:     disks,
 		Fans:      fans,
+		Sensors:   sensors,
 		Timestamp: now,
-		History:   c.history,
 	}
+}
+
+// readSensors 读取所有 hwmon 温度通道。通道列表每分钟刷新一次，避免每秒 Glob。
+func (c *Controller) readSensors() []model.SensorReading {
+	if time.Since(c.lastSensorScan) > time.Minute || c.sensorChans == nil {
+		if chans, err := c.hwmon.ScanTempChannels(); err == nil {
+			c.sensorChans = chans
+			c.lastSensorScan = time.Now()
+		} else {
+			logrus.Debugf("[传感器] 扫描温度通道失败：%v", err)
+		}
+	}
+	out := make([]model.SensorReading, 0, len(c.sensorChans))
+	for _, ch := range c.sensorChans {
+		v, _ := c.hwmon.ReadTemp(ch.Path)
+		out = append(out, model.SensorReading{
+			ID:     ch.ID,
+			Chip:   ch.Chip,
+			Device: ch.Device,
+			Key:    ch.Key,
+			Label:  ch.Label,
+			Temp:   v,
+		})
+	}
+	return out
 }
 
 func (c *Controller) readDisks() model.DiskPayload {
@@ -213,16 +251,19 @@ func (c *Controller) readDisks() model.DiskPayload {
 	return model.DiskPayload{AvgTemp: avg, Details: details}
 }
 
-func (c *Controller) calculateTargetPWM(fan model.FanConfig, global model.GlobalConfig, cpuTemp, gpuTemp *float64, disks model.DiskPayload) (int, *float64) {
+func (c *Controller) calculateTargetPWM(
+	fan model.FanConfig, global model.GlobalConfig,
+	cpuTemp, gpuTemp *float64, disks model.DiskPayload, sensors []model.SensorReading,
+) (int, *float64) {
 	if fan.Mode == model.FanModeManual {
 		logrus.Debugf("[控制器] 风扇 %s 手动模式 PWM=%d", fan.Name, fan.ManualPWM)
 		return clampPWM(fan.ManualPWM), nil
 	}
 
-	temp := c.resolveSourceTemp(fan.Source, cpuTemp, gpuTemp, disks)
+	temp := c.resolveSourceTemp(fan.Source, cpuTemp, gpuTemp, disks, sensors)
 	if temp == nil {
-		logrus.Warnf("[控制器] 风扇 %s 无法获取温度(源=%s)，跳过", fan.Name, fan.Source)
-		return 0, nil
+		logrus.Warnf("[控制器] 风扇 %s 无法获取温度(源=%s)，保持当前转速", fan.Name, fan.Source)
+		return -1, nil
 	}
 	if *temp >= global.EmergencyTemp {
 		logrus.Warnf("[控制器] 风扇 %s 温度%.1f°C ≥ 紧急温度%.1f°C，全速!", fan.Name, *temp, global.EmergencyTemp)
@@ -291,7 +332,10 @@ func (c *Controller) applyStopHysteresis(fanID string, curve []model.CurvePoint,
 	return basePWM
 }
 
-func (c *Controller) resolveSourceTemp(source string, cpuTemp, gpuTemp *float64, disks model.DiskPayload) *float64 {
+func (c *Controller) resolveSourceTemp(
+	source string, cpuTemp, gpuTemp *float64,
+	disks model.DiskPayload, sensors []model.SensorReading,
+) *float64 {
 	switch {
 	case source == "cpu":
 		return cpuTemp
@@ -299,32 +343,76 @@ func (c *Controller) resolveSourceTemp(source string, cpuTemp, gpuTemp *float64,
 		return gpuTemp
 	case source == "disk_avg":
 		return disks.AvgTemp
-	case source == "max":
-		var values []float64
-		for _, v := range []*float64{cpuTemp, gpuTemp, disks.AvgTemp} {
-			if v != nil {
-				values = append(values, *v)
-			}
-		}
+	case source == "disk_max":
+		var best *float64
 		for _, disk := range disks.Details {
-			if disk.Temp != nil {
-				values = append(values, *disk.Temp)
+			if disk.Temp != nil && (best == nil || *disk.Temp > *best) {
+				v := *disk.Temp
+				best = &v
 			}
 		}
-		if len(values) == 0 {
-			return nil
+		return best
+	case source == "max":
+		var best *float64
+		consider := func(v *float64) {
+			if v != nil && (best == nil || *v > *best) {
+				cp := *v
+				best = &cp
+			}
 		}
-		sort.Float64s(values)
-		v := values[len(values)-1]
-		return &v
-	case len(source) > 5 && source[:5] == "disk:":
-		name := source[5:]
+		consider(cpuTemp)
+		consider(gpuTemp)
+		consider(disks.AvgTemp)
+		for _, disk := range disks.Details {
+			consider(disk.Temp)
+		}
+		for _, s := range sensors {
+			consider(s.Temp)
+		}
+		return best
+	case strings.HasPrefix(source, "disk:"):
+		name := source[len("disk:"):]
 		for _, disk := range disks.Details {
 			if disk.Name == name && disk.Status == model.DiskStatusActive && disk.Temp != nil {
 				v := *disk.Temp
 				return &v
 			}
 		}
+	case strings.HasPrefix(source, "sensor:"):
+		id := source[len("sensor:"):]
+		for _, s := range sensors {
+			if s.ID == id && s.Temp != nil {
+				v := *s.Temp
+				return &v
+			}
+		}
+	case strings.HasPrefix(source, "combo_avg:"):
+		keys := strings.Split(source[len("combo_avg:"):], ",")
+		var sum float64
+		var count int
+		for _, k := range keys {
+			if t := c.resolveSourceTemp(strings.TrimSpace(k), cpuTemp, gpuTemp, disks, sensors); t != nil {
+				sum += *t
+				count++
+			}
+		}
+		if count == 0 {
+			return nil
+		}
+		v := sum / float64(count)
+		return &v
+	case strings.HasPrefix(source, "combo_max:"):
+		keys := strings.Split(source[len("combo_max:"):], ",")
+		var best *float64
+		for _, k := range keys {
+			if t := c.resolveSourceTemp(strings.TrimSpace(k), cpuTemp, gpuTemp, disks, sensors); t != nil {
+				if best == nil || *t > *best {
+					v := *t
+					best = &v
+				}
+			}
+		}
+		return best
 	}
 	return nil
 }
@@ -556,6 +644,9 @@ func interpolateCurve(points []model.CurvePoint, temp float64) int {
 		if temp <= points[i].Temp {
 			prev := points[i-1]
 			next := points[i]
+			if next.Temp == prev.Temp {
+				return prev.PWM
+			}
 			ratio := (temp - prev.Temp) / (next.Temp - prev.Temp)
 			result := int(math.Round(float64(prev.PWM) + ratio*float64(next.PWM-prev.PWM)))
 			logrus.Debugf("[曲线] %.1f°C → [%d%%, %d%%] 插值 → PWM=%d", temp, prev.PWM, next.PWM, result)

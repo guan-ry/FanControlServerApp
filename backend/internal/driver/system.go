@@ -40,7 +40,7 @@ func (d *SystemDriver) CPUUsage() (float64, error) {
 	for _, v := range nums {
 		total += v
 	}
-	if d.prevTotal == 0 {
+	if d.prevTotal == 0 || total < d.prevTotal || idle < d.prevIdle {
 		d.prevIdle, d.prevTotal = idle, total
 		return 0, nil
 	}
@@ -53,10 +53,11 @@ func (d *SystemDriver) CPUUsage() (float64, error) {
 	return 100 * (1 - float64(deltaIdle)/float64(deltaTotal)), nil
 }
 
-func (d *SystemDriver) MemUsage() (float64, error) {
+// MemInfo 一次读取 /proc/meminfo，返回内存使用率（%）和总量（GB）。
+func (d *SystemDriver) MemInfo() (usage float64, totalGB *float64, err error) {
 	content, err := os.ReadFile("/proc/meminfo")
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	values := map[string]float64{}
 	for _, line := range strings.Split(string(content), "\n") {
@@ -71,38 +72,12 @@ func (d *SystemDriver) MemUsage() (float64, error) {
 		values[fields[0]] = v
 	}
 	total := values["MemTotal"]
+	if total == 0 {
+		return 0, nil, errors.New("无效的 /proc/meminfo 数据")
+	}
 	available := values["MemAvailable"]
-	if total == 0 {
-		return 0, errors.New("无效的 /proc/meminfo 数据")
-	}
-	return 100 * (1 - available/total), nil
-}
-
-// MemTotal 返回内存总量（GB）
-func (d *SystemDriver) MemTotal() (*float64, error) {
-	content, err := os.ReadFile("/proc/meminfo")
-	if err != nil {
-		return nil, err
-	}
-	values := map[string]float64{}
-	for _, line := range strings.Split(string(content), "\n") {
-		fields := strings.Fields(strings.ReplaceAll(line, ":", ""))
-		if len(fields) < 2 {
-			continue
-		}
-		v, err := strconv.ParseFloat(fields[1], 64)
-		if err != nil {
-			continue
-		}
-		values[fields[0]] = v
-	}
-	total := values["MemTotal"]
-	if total == 0 {
-		return nil, errors.New("无效的 /proc/meminfo 数据")
-	}
-	// 转换为 GB（/proc/meminfo 单位是 kB）
 	gb := total / 1024 / 1024
-	return &gb, nil
+	return 100 * (1 - available/total), &gb, nil
 }
 
 func (d *SystemDriver) CPUTemp() (*float64, error) {
@@ -117,7 +92,10 @@ func (d *SystemDriver) CPUTemp() (*float64, error) {
 		if raw, err := os.ReadFile(labelPath); err == nil {
 			label = strings.ToLower(strings.TrimSpace(string(raw)))
 		}
-		if label != "" && !strings.Contains(label, "package") && !strings.Contains(label, "cpu") && !strings.Contains(label, "tdie") {
+		if label == "" {
+			continue
+		}
+		if !strings.Contains(label, "package") && !strings.Contains(label, "cpu") && !strings.Contains(label, "tdie") {
 			continue
 		}
 		raw, err := os.ReadFile(p)

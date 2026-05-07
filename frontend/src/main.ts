@@ -18,7 +18,7 @@ import {
     setGlobalConfig,
     setStoredToken,
 } from "./api";
-import type {ConfigPayload, CurvePoint, FanConfig, GlobalConfig, ScannedFan, Telemetry} from "./types";
+import type {ConfigPayload, CurvePoint, FanConfig, GlobalConfig, ScannedFan, SensorReading, Telemetry} from "./types";
 
 const DEFAULT_CURVE: CurvePoint[] = [
     {temp: 30, pwm: 80},
@@ -44,6 +44,7 @@ let fanCurveChartBound = false;
 let curveData: number[][] = [];
 let selectedCurveFanId = "";
 let historyChart: echarts.ECharts | null = null;
+let lastChartUpdate = 0;
 
 // 圆环周长 (2 * PI * 15.5 ≈ 97.4)
 const RING_CIRCUMFERENCE = 97.4;
@@ -119,6 +120,10 @@ function onTelemetryReceived(t: Telemetry) {
 
 let editFanIdx: number | null = null;
 let lastScanResults: ScannedFan[] = [];
+type SourceMode = "simple" | "advanced";
+
+// 风扇编辑对话框打开时的 source_mode 快照；用于"取消未保存"时回滚。
+let originalSourceMode: SourceMode | null = null;
 
 function $(id: string): HTMLElement {
     const el = document.getElementById(id);
@@ -240,7 +245,12 @@ function applyTelemetry(t: Telemetry) {
 
     syncFanCardsFromTelemetryOrRender();
     renderStorageList();
-    updateHistoryChart();
+    updateSensorMgrTemps();
+    const now = Date.now();
+    if (now - lastChartUpdate >= 2000) {
+        lastChartUpdate = now;
+        updateHistoryChart();
+    }
 }
 
 function renderStorageList() {
@@ -382,7 +392,7 @@ function syncFanCardsFromTelemetryOrRender() {
         if (manualUi) manualUi.classList.toggle("hidden", !manual);
         if (autoUi) autoUi.classList.toggle("hidden", manual);
 
-        // 更新温度源显示
+        // 更新温度源显示（仅显示源名，温度只在下拉中展示）
         const fanSource = card.querySelector("[data-fan-source]") as HTMLElement | null;
         if (fanSource) {
             fanSource.textContent = getSourceLabel(fan.source);
@@ -456,32 +466,366 @@ function renderFanCards() {
         .join("");
 }
 
-function renderSourceOptions(current: string): string {
+// resolveSourceTemp 解析一个 source 字符串对应的当前温度（°C）。
+// 与后端 controller.resolveSourceTemp 行为对齐，用于在 UI 上展示「源 + 当前温度」。
+function resolveSourceTemp(source: string): number | undefined {
+    const t = telemetry;
+    if (!t) return undefined;
+
+    if (source === "cpu") return t.cpu_temp;
+    if (source === "gpu") return t.gpu_temp;
+    if (source === "disk_avg") return t.disks?.avg_temp;
+    if (source === "disk_max") {
+        let best: number | undefined;
+        for (const d of t.disks?.details ?? []) {
+            if (d.temp != null && (best === undefined || d.temp > best)) best = d.temp;
+        }
+        return best;
+    }
+    if (source === "max") {
+        const all: number[] = [];
+        if (t.cpu_temp != null) all.push(t.cpu_temp);
+        if (t.gpu_temp != null) all.push(t.gpu_temp);
+        if (t.disks?.avg_temp != null) all.push(t.disks.avg_temp);
+        for (const d of t.disks?.details ?? []) {
+            if (d.temp != null) all.push(d.temp);
+        }
+        for (const s of t.sensors ?? []) {
+            if (s.temp != null) all.push(s.temp);
+        }
+        return all.length ? Math.max(...all) : undefined;
+    }
+    if (source.startsWith("disk:")) {
+        const name = source.slice(5);
+        return (t.disks?.details ?? []).find(d => d.name === name)?.temp;
+    }
+    if (source.startsWith("sensor:")) {
+        const id = source.slice(7);
+        return (t.sensors ?? []).find(s => s.id === id)?.temp;
+    }
+    if (source.startsWith("combo_avg:")) {
+        const vals = source.slice("combo_avg:".length).split(",")
+            .map(k => resolveSourceTemp(k.trim()))
+            .filter((v): v is number => v != null);
+        return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : undefined;
+    }
+    if (source.startsWith("combo_max:")) {
+        const vals = source.slice("combo_max:".length).split(",")
+            .map(k => resolveSourceTemp(k.trim()))
+            .filter((v): v is number => v != null);
+        return vals.length ? Math.max(...vals) : undefined;
+    }
+    return undefined;
+}
+
+// 单个温度文本的辅助函数：有温度返回 "47.3°C"，休眠返回 "休眠"，其余返回 "—"
+function fmtTemp(t: number | undefined, sleep?: boolean): string {
+    if (sleep) return "休眠";
+    return t != null ? `${t.toFixed(1)}°C` : "—";
+}
+
+interface SourceItem {
+    v: string;
+    name: string;
+    temp?: number;
+    sleep?: boolean;
+}
+
+interface SourceGroup {
+    label: string;
+    items: SourceItem[];
+}
+
+// 收集当前模式下要展示的源分组。简洁模式 1 组；极客模式按 chip+device 分组。
+function collectSourceGroups(mode: "simple" | "advanced"): SourceGroup[] {
     const disks = telemetry?.disks.details ?? [];
-    const opts: { v: string; l: string }[] = [
-        {v: "cpu", l: "CPU"},
-        {v: "gpu", l: "GPU"},
-        {v: "disk_avg", l: "硬盘平均"},
-        {v: "max", l: "最大值"}
-    ];
-    disks.forEach(d => opts.push({v: `disk:${d.name}`, l: `硬盘 ${d.name}`}));
-    return opts
-        .map(o => `<option value="${esc(o.v)}" ${o.v === current ? "selected" : ""}>${esc(o.l)}</option>`)
-        .join("");
+    const allSensors = telemetry?.sensors ?? [];
+    const hidden = new Set(config.global.sensor_hidden ?? []);
+    const aliases = config.global.sensor_aliases ?? {};
+    const sensors = allSensors.filter(s => !hidden.has(s.id));
+
+    if (mode === "simple") {
+        const items: SourceItem[] = [
+            {v: "cpu", name: "CPU"},
+            {v: "gpu", name: "GPU"},
+        ];
+        disks.forEach(d => items.push({
+            v: `disk:${d.name}`, name: `硬盘 ${d.name}`,
+            sleep: d.status === "sleep",
+        }));
+        items.push({v: "disk_avg", name: "硬盘平均"});
+        items.push({v: "disk_max", name: "硬盘最大"});
+        items.forEach(it => { if (!it.sleep) it.temp = resolveSourceTemp(it.v); });
+        return [{label: "常用温度源", items}];
+    }
+
+    const groups = new Map<string, SourceItem[]>();
+    for (const s of sensors) {
+        const key = s.device ? `${s.chip} · ${s.device}` : s.chip;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push({
+            v: `sensor:${s.id}`,
+            name: aliases[s.id] || s.label || s.key,
+            temp: s.temp,
+        });
+    }
+    return [...groups.entries()].map(([label, items]) => ({label, items}));
+}
+
+// renderSourceOptions 生成自定义下拉浮层的 innerHTML。
+// 每行用 flex 实现真正的左右两端对齐：源名靠左、温度靠右。
+function renderSourceOptions(current: string, mode: "simple" | "advanced"): string {
+    const groups = collectSourceGroups(mode);
+    let html = "";
+    let currentInList = false;
+
+    for (const g of groups) {
+        html += `<div class="px-3 py-1 text-[10px] uppercase tracking-wider text-sky-400 bg-slate-900 sticky top-0 z-10 border-b border-slate-700/50">${esc(g.label)}</div>`;
+        for (const it of g.items) {
+            if (it.v === current) currentInList = true;
+            const active = it.v === current;
+            const nameCls = active ? "text-sky-300 font-medium" : "text-slate-200";
+            const tempCls = active ? "text-sky-400" : "text-slate-400";
+            const checkIcon = active
+                ? `<iconify-icon class="text-sky-400 ml-2 flex-shrink-0" icon="mdi:check"></iconify-icon>`
+                : "";
+            const tempText = fmtTemp(it.temp, it.sleep);
+            const sleepCls = it.sleep ? "text-slate-500 italic" : tempCls;
+            html += `
+<button type="button" data-source-value="${esc(it.v)}"
+        class="w-full flex items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-slate-700/70 ${active ? "bg-slate-700/40" : ""}">
+    <span class="${nameCls} truncate">${esc(it.name)}</span>
+    <span class="flex items-center gap-1 flex-shrink-0">
+        <span class="${sleepCls} font-mono tabular-nums text-xs">${esc(tempText)}</span>
+        ${checkIcon}
+    </span>
+</button>`;
+        }
+    }
+
+    // combo source 也算"在列表里"——它不是某个具体 option，但在高级模式的组合区域能回显。
+    const isCombo = current.startsWith("combo_avg:") || current.startsWith("combo_max:");
+    if (isCombo) currentInList = true;
+
+    // 当前选中的源不在本模式的列表里（跨模式 / 硬件变化 / 被隐藏），加一条提示行。
+    if (current && !currentInList) {
+        const tip = `（当前选中：${esc(getSourceLabel(current))}）`;
+        html = `<div class="px-3 py-2 text-xs text-amber-400 italic bg-amber-500/5 border-b border-amber-500/30">${tip}</div>` + html;
+    }
+
+    // 高级模式：在 sensor 列表下方追加组合温度源区域
+    if (mode === "advanced") {
+        html += renderComboSection(current);
+    }
+
+    return html;
+}
+
+// 渲染高级模式底部的"组合温度源"区域（内嵌在同一浮层中）。
+function renderComboSection(currentSource: string): string {
+    const items = collectAllSourceItems();
+    const combo = parseComboSource(currentSource);
+    const selected = new Set<string>(combo?.keys ?? []);
+    const strategy = combo?.strategy ?? "avg";
+    const isComboActive = combo !== null;
+
+    const computedTemp = isComboActive ? resolveSourceTemp(currentSource) : undefined;
+    const countSelected = selected.size;
+
+    let html = `
+<div class="border-t-2 border-sky-500/30 mt-1">
+    <div class="px-3 py-1.5 text-[10px] uppercase tracking-wider text-sky-400 bg-slate-900 sticky top-0 z-10 border-b border-slate-700/50 flex items-center justify-between">
+        <span>组合温度源</span>
+        <div class="flex items-center gap-3 normal-case tracking-normal">
+            <label class="flex items-center gap-1 cursor-pointer">
+                <input type="radio" name="combo-strategy" value="avg" ${strategy === "avg" ? "checked" : ""}
+                       class="accent-sky-500 w-3 h-3"/>
+                <span class="text-[11px] text-slate-300">平均</span>
+            </label>
+            <label class="flex items-center gap-1 cursor-pointer">
+                <input type="radio" name="combo-strategy" value="max" ${strategy === "max" ? "checked" : ""}
+                       class="accent-sky-500 w-3 h-3"/>
+                <span class="text-[11px] text-slate-300">最大</span>
+            </label>
+        </div>
+    </div>`;
+
+    for (const it of items) {
+        const checked = selected.has(it.v);
+        html += `
+<label data-combo-key="${esc(it.v)}"
+       class="w-full flex items-center justify-between gap-3 px-3 py-1.5 text-sm hover:bg-slate-700/70 cursor-pointer ${checked ? "bg-slate-700/40" : ""}">
+    <span class="flex items-center gap-2 truncate">
+        <input type="checkbox" data-combo-cb value="${esc(it.v)}" ${checked ? "checked" : ""}
+               class="accent-sky-500 flex-shrink-0 w-3.5 h-3.5"/>
+        <span class="${checked ? "text-sky-300" : "text-slate-200"} truncate text-xs">${esc(it.name)}</span>
+    </span>
+    <span class="${it.sleep ? "text-slate-500 italic" : "text-slate-400"} font-mono tabular-nums text-xs flex-shrink-0">${esc(fmtTemp(it.temp, it.sleep))}</span>
+</label>`;
+    }
+
+    html += `
+<div class="sticky bottom-0 bg-slate-900 border-t border-slate-700/50 px-3 py-2 flex items-center justify-between gap-3">
+    <div class="text-xs text-slate-400">
+        已选 <span id="combo-count" class="text-sky-400 font-bold">${countSelected}</span> 个
+        <span class="mx-1">·</span>
+        计算值: <span id="combo-preview" class="text-sky-400 font-mono">${esc(fmtTemp(computedTemp))}</span>
+    </div>
+    <button type="button" id="combo-confirm"
+            class="px-4 py-1.5 rounded-lg text-xs font-medium ${countSelected >= 2 ? "bg-sky-600 text-white hover:bg-sky-500" : "bg-slate-700 text-slate-500 cursor-not-allowed"}"
+            ${countSelected < 2 ? "disabled" : ""}>
+        确定组合
+    </button>
+</div>
+</div>`;
+
+    return html;
+}
+
+// 检查 source 是否涉及 SATA 盘（可能休眠）。
+function hasSataDisk(source: string): boolean {
+    if (source.startsWith("disk:") && !source.slice(5).startsWith("nvme")) return true;
+    if (source.startsWith("combo_avg:") || source.startsWith("combo_max:")) {
+        const prefix = source.startsWith("combo_avg:") ? "combo_avg:" : "combo_max:";
+        return source.slice(prefix.length).split(",").some(k => hasSataDisk(k.trim()));
+    }
+    return false;
+}
+
+// 写入隐藏 input.value 并刷新触发按钮的显示文本（源名 + 当前温度）。
+function setSourceValue(value: string) {
+    const input = document.getElementById("fe-source") as HTMLInputElement | null;
+    if (input) input.value = value;
+
+    const display = document.getElementById("fe-source-display");
+    if (display) {
+        const t = resolveSourceTemp(value);
+        const tempPart = t != null ? ` · ${t.toFixed(1)}°C` : "";
+        display.textContent = `${getSourceLabel(value)}${tempPart}`;
+    }
+
+    const warn = document.getElementById("fe-source-warn");
+    if (warn) warn.classList.toggle("hidden", !hasSataDisk(value));
 }
 
 function getSourceLabel(source: string): string {
     const disks = telemetry?.disks.details ?? [];
+    const sensors = telemetry?.sensors ?? [];
+    const aliases = config.global.sensor_aliases ?? {};
+
     if (source === "cpu") return "CPU";
     if (source === "gpu") return "GPU";
     if (source === "disk_avg") return "硬盘平均";
-    if (source === "max") return "最大值";
+    if (source === "disk_max") return "硬盘最大";
+    if (source === "max") return "全部最大";
     if (source.startsWith("disk:")) {
         const name = source.slice(5);
         const disk = disks.find(d => d.name === name);
         return disk ? `硬盘 ${name}` : name;
     }
+    if (source.startsWith("sensor:")) {
+        const id = source.slice(7);
+        const s = sensors.find(x => x.id === id);
+        if (!s) return aliases[id] || id;
+        const name = aliases[s.id] || s.label || s.key;
+        return s.device ? `${s.chip}·${s.device}·${name}` : `${s.chip}·${name}`;
+    }
+    if (source.startsWith("combo_avg:")) {
+        const keys = source.slice("combo_avg:".length).split(",").map(k => k.trim());
+        return `平均(${keys.map(k => getSourceLabel(k)).join(", ")})`;
+    }
+    if (source.startsWith("combo_max:")) {
+        const keys = source.slice("combo_max:".length).split(",").map(k => k.trim());
+        return `最大(${keys.map(k => getSourceLabel(k)).join(", ")})`;
+    }
     return source;
+}
+
+// 更新风扇编辑对话框上的"简洁/极客"切换按钮高亮状态，并刷新下拉浮层。
+function resolveSourceMode(): SourceMode {
+    return config.global.source_mode === "advanced" ? "advanced" : "simple";
+}
+
+// 组合模式：收集所有可选源（简洁 + 高级合并去重）。
+function collectAllSourceItems(): SourceItem[] {
+    const simpleGroups = collectSourceGroups("simple");
+    const advancedGroups = collectSourceGroups("advanced");
+    const seen = new Set<string>();
+    const out: SourceItem[] = [];
+    for (const g of [...simpleGroups, ...advancedGroups]) {
+        for (const it of g.items) {
+            if (!seen.has(it.v)) {
+                seen.add(it.v);
+                out.push(it);
+            }
+        }
+    }
+    return out;
+}
+
+// 解析 combo source 字符串，返回 {strategy, keys}。
+function parseComboSource(source: string): { strategy: "avg" | "max"; keys: string[] } | null {
+    if (source.startsWith("combo_avg:")) {
+        return { strategy: "avg", keys: source.slice("combo_avg:".length).split(",").map(k => k.trim()).filter(Boolean) };
+    }
+    if (source.startsWith("combo_max:")) {
+        return { strategy: "max", keys: source.slice("combo_max:".length).split(",").map(k => k.trim()).filter(Boolean) };
+    }
+    return null;
+}
+
+
+
+// 从面板当前勾选状态生成 combo source 字符串。
+function buildComboSourceFromPanel(): string {
+    const menu = document.getElementById("fe-source-menu");
+    if (!menu) return "";
+    const boxes = menu.querySelectorAll<HTMLInputElement>("input[data-combo-cb]:checked");
+    const keys = Array.from(boxes).map(cb => cb.value);
+    const strategyRadio = menu.querySelector<HTMLInputElement>("input[name='combo-strategy']:checked");
+    const strategy = strategyRadio?.value === "max" ? "max" : "avg";
+    if (keys.length < 2) return "";
+    return `combo_${strategy}:${keys.join(",")}`;
+}
+
+// 更新面板底部预览（实时计算）。
+function updateComboPreview() {
+    const source = buildComboSourceFromPanel();
+    const countEl = document.getElementById("combo-count");
+    const previewEl = document.getElementById("combo-preview");
+    const confirmBtn = document.getElementById("combo-confirm") as HTMLButtonElement | null;
+    const menu = document.getElementById("fe-source-menu");
+    if (!menu) return;
+    const boxes = menu.querySelectorAll<HTMLInputElement>("input[data-combo-cb]:checked");
+    const count = boxes.length;
+
+    if (countEl) countEl.textContent = String(count);
+    if (previewEl) {
+        const temp = source ? resolveSourceTemp(source) : undefined;
+        previewEl.textContent = fmtTemp(temp);
+    }
+    if (confirmBtn) {
+        const ok = count >= 2;
+        confirmBtn.disabled = !ok;
+        confirmBtn.className = `px-4 py-1.5 rounded-lg text-xs font-medium ${ok ? "bg-sky-600 text-white hover:bg-sky-500" : "bg-slate-700 text-slate-500 cursor-not-allowed"}`;
+    }
+}
+
+function applySourceModeUI(mode: SourceMode) {
+    const switcher = document.getElementById("fe-source-mode");
+    if (switcher) {
+        switcher.querySelectorAll<HTMLButtonElement>("button[data-source-mode]").forEach(btn => {
+            const active = btn.dataset.sourceMode === mode;
+            btn.className = `px-3 py-1 text-xs rounded-md transition-colors ${
+                active ? "bg-sky-500 text-white shadow-lg" : "text-slate-400 hover:text-white"
+            }`;
+        });
+    }
+    const menu = document.getElementById("fe-source-menu");
+    const input = document.getElementById("fe-source") as HTMLInputElement | null;
+    if (menu && input) {
+        menu.innerHTML = renderSourceOptions(input.value, mode);
+    }
 }
 
 function updateHistoryChart() {
@@ -758,8 +1102,92 @@ function fillGlobalForm() {
     ($("g-stop-beh") as HTMLSelectElement).value = g.stop_behavior;
     ($("g-stop-pwm") as HTMLInputElement).value = String(g.stop_pwm);
     ($("g-hysteresis") as HTMLInputElement).value = String(g.stop_hysteresis);
-    ($("g-log-level") as HTMLSelectElement).value = g.log_level || "info";
     updateStopPWMRow();
+}
+
+// 渲染传感器管理面板的表格行
+function renderSensorMgrTable() {
+    const tbody = document.getElementById("sensor-mgr-tbody");
+    if (!tbody) return;
+    const sensors = telemetry?.sensors ?? [];
+    const aliases = config.global.sensor_aliases ?? {};
+    const hiddenSet = new Set(config.global.sensor_hidden ?? []);
+
+    if (sensors.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-slate-500">暂无传感器数据（等待后端推送）</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = sensors.map(s => {
+        const chipLabel = s.device ? `${s.chip} · ${s.device}` : s.chip;
+        const label = s.label || s.key;
+        const temp = s.temp != null ? `${s.temp.toFixed(1)}°C` : "—";
+        const alias = aliases[s.id] ?? "";
+        const hidden = hiddenSet.has(s.id);
+        return `
+<tr class="border-b border-slate-700/30 ${hidden ? "opacity-50" : ""}" data-sensor-id="${esc(s.id)}">
+    <td class="p-2 text-sky-400 font-mono whitespace-nowrap">${esc(chipLabel)}</td>
+    <td class="p-2 text-slate-300 whitespace-nowrap">${esc(label)}</td>
+    <td class="p-2 font-mono tabular-nums text-slate-400">${esc(temp)}</td>
+    <td class="p-2">
+        <input type="text" data-sensor-alias
+               class="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder-slate-600"
+               value="${esc(alias)}" placeholder="${esc(label)}"/>
+    </td>
+    <td class="p-2 text-center">
+        <input type="checkbox" data-sensor-hidden ${hidden ? "checked" : ""}
+               class="accent-sky-500 w-4 h-4 cursor-pointer"/>
+    </td>
+</tr>`;
+    }).join("");
+}
+
+// 从传感器面板收集别名和隐藏列表，写回 config.global
+function readSensorMgrIntoConfig() {
+    const tbody = document.getElementById("sensor-mgr-tbody");
+    if (!tbody) return;
+    const rows = tbody.querySelectorAll<HTMLTableRowElement>("tr[data-sensor-id]");
+    const aliases: Record<string, string> = {};
+    const hidden: string[] = [];
+    rows.forEach(row => {
+        const id = row.dataset.sensorId!;
+        const aliasInput = row.querySelector<HTMLInputElement>("input[data-sensor-alias]");
+        const hiddenCb = row.querySelector<HTMLInputElement>("input[data-sensor-hidden]");
+        const alias = aliasInput?.value.trim() ?? "";
+        if (alias) aliases[id] = alias;
+        if (hiddenCb?.checked) hidden.push(id);
+    });
+    config.global.sensor_aliases = aliases;
+    config.global.sensor_hidden = hidden;
+}
+
+// 实时更新传感器面板的温度列（不重绘整表，避免干扰别名输入）
+function updateSensorMgrTemps() {
+    const panel = document.getElementById("sensor-mgr-panel");
+    if (!panel || panel.classList.contains("hidden")) return;
+    const sensors = telemetry?.sensors ?? [];
+    const sensorMap = new Map(sensors.map(s => [s.id, s]));
+    const rows = panel.querySelectorAll<HTMLTableRowElement>("tr[data-sensor-id]");
+    rows.forEach(row => {
+        const id = row.dataset.sensorId!;
+        const s = sensorMap.get(id);
+        const td = row.children[2] as HTMLElement | undefined;
+        if (td) td.textContent = s?.temp != null ? `${s.temp.toFixed(1)}°C` : "—";
+    });
+}
+
+// 通用折叠区绑定
+function bindCollapsible(toggleId: string, panelId: string, chevronId: string, onOpen?: () => void) {
+    const toggle = document.getElementById(toggleId);
+    const panel = document.getElementById(panelId);
+    const chevron = document.getElementById(chevronId);
+    if (!toggle || !panel || !chevron) return;
+    toggle.addEventListener("click", () => {
+        const wasHidden = panel.classList.contains("hidden");
+        panel.classList.toggle("hidden");
+        chevron.style.transform = wasHidden ? "rotate(90deg)" : "";
+        if (wasHidden && onOpen) onOpen();
+    });
 }
 
 function updateStopPWMRow() {
@@ -777,13 +1205,13 @@ function clampPWM(v: number): number {
 function readGlobalForm(): GlobalConfig {
     const stopBeh = ($("g-stop-beh") as HTMLSelectElement).value;
     return {
+        ...config.global,
         pwm_deadzone: clampPWM(Number(($("g-deadzone") as HTMLInputElement).value) || 0),
         update_interval_ms: Math.max(1000, Number(($("g-interval") as HTMLInputElement).value) * 1000) || 2000,
         emergency_temp: Math.max(0, Number(($("g-emergency") as HTMLInputElement).value) || 80),
         stop_behavior: stopBeh === "set" ? "set" : "keep",
         stop_pwm: clampPWM(Number(($("g-stop-pwm") as HTMLInputElement).value) || 200),
         stop_hysteresis: Math.max(0, Number(($("g-hysteresis") as HTMLInputElement).value) || 2),
-        log_level: ($("g-log-level") as HTMLSelectElement).value || "info"
     };
 }
 
@@ -798,9 +1226,13 @@ function openFanSettingsDialog(idx: number) {
     ($("fe-pwm") as HTMLInputElement).value = fan.pwm_path;
     ($("fe-rpm") as HTMLInputElement).value = fan.rpm_path;
     ($("fe-en") as HTMLInputElement).value = fan.enable_path;
-    const src = $("fe-source") as HTMLSelectElement;
-    src.innerHTML = renderSourceOptions(fan.source);
-    src.value = fan.source;
+    setSourceValue(fan.source);
+    closeSourceMenu();
+    originalSourceMode = resolveSourceMode();
+    // combo source 在高级模式中展示组合区域，自动切到 advanced
+    const isCombo = fan.source.startsWith("combo_avg:") || fan.source.startsWith("combo_max:");
+    const displayMode: SourceMode = isCombo ? "advanced" : originalSourceMode;
+    applySourceModeUI(displayMode);
 
     initFanCurveChartShell();
     loadCurveIntoEditor();
@@ -821,7 +1253,7 @@ function readFanFormIntoConfig(): FanConfig | null {
     fan.pwm_path = ($("fe-pwm") as HTMLInputElement).value.trim();
     fan.rpm_path = ($("fe-rpm") as HTMLInputElement).value.trim();
     fan.enable_path = ($("fe-en") as HTMLInputElement).value.trim();
-    fan.source = ($("fe-source") as HTMLSelectElement).value;
+    fan.source = ($("fe-source") as HTMLInputElement).value;
     return fan;
 }
 
@@ -898,6 +1330,112 @@ function bindFanRoot() {
                 toast(String(e), "error");
             }
         }
+    });
+}
+
+// ===== 自定义温度源下拉的开关 / 选择 / 外部点击关闭 / Esc 关闭 =====
+
+function openSourceMenu() {
+    const menu = document.getElementById("fe-source-menu");
+    const chevron = document.getElementById("fe-source-chevron");
+    if (menu) {
+        menu.classList.remove("hidden");
+        menu.scrollTop = 0;
+    }
+    if (chevron) chevron.style.transform = "rotate(180deg)";
+}
+
+function closeSourceMenu() {
+    const menu = document.getElementById("fe-source-menu");
+    const chevron = document.getElementById("fe-source-chevron");
+    if (menu) menu.classList.add("hidden");
+    if (chevron) chevron.style.transform = "";
+}
+
+function isSourceMenuOpen(): boolean {
+    const menu = document.getElementById("fe-source-menu");
+    return !!menu && !menu.classList.contains("hidden");
+}
+
+function bindSourceDropdown() {
+    const btn = document.getElementById("fe-source-btn");
+    const menu = document.getElementById("fe-source-menu");
+    const wrapper = document.getElementById("fe-source-wrapper");
+    if (!btn || !menu || !wrapper) return;
+
+    btn.addEventListener("click", ev => {
+        ev.stopPropagation();
+        if (isSourceMenuOpen()) {
+            closeSourceMenu();
+        } else {
+            const mode = resolveSourceMode();
+            const input = document.getElementById("fe-source") as HTMLInputElement | null;
+            menu.innerHTML = renderSourceOptions(input?.value ?? "", mode);
+            openSourceMenu();
+        }
+    });
+
+    // 简洁/高级模式：点选单个源
+    menu.addEventListener("click", ev => {
+        const target = (ev.target as HTMLElement).closest<HTMLButtonElement>("button[data-source-value]");
+        if (target) {
+            const v = target.dataset.sourceValue;
+            if (v === undefined) return;
+            setSourceValue(v);
+            const mode = resolveSourceMode();
+            menu.innerHTML = renderSourceOptions(v, mode);
+            closeSourceMenu();
+            return;
+        }
+
+        // 组合模式：确认按钮
+        const confirm = (ev.target as HTMLElement).closest("#combo-confirm") as HTMLButtonElement | null;
+        if (confirm && !confirm.disabled) {
+            const src = buildComboSourceFromPanel();
+            if (src) {
+                setSourceValue(src);
+                closeSourceMenu();
+            }
+        }
+    });
+
+    // 组合模式：checkbox / radio 变化 → 更新预览
+    menu.addEventListener("change", ev => {
+        const t = ev.target as HTMLInputElement;
+        if (t.dataset.comboCb !== undefined || t.name === "combo-strategy") {
+            updateComboPreview();
+        }
+    });
+
+    // 点击外部关闭
+    document.addEventListener("click", ev => {
+        if (!isSourceMenuOpen()) return;
+        if (wrapper.contains(ev.target as Node)) return;
+        closeSourceMenu();
+    });
+
+    // Esc 关闭
+    document.addEventListener("keydown", ev => {
+        if (ev.key === "Escape" && isSourceMenuOpen()) {
+            closeSourceMenu();
+            ev.stopPropagation();
+        }
+    });
+}
+
+// bindSourceModeSwitcher 绑定风扇编辑对话框中"简洁/极客"切换按钮的事件。
+// 仅在本地 config 上修改 source_mode + 刷新下拉；持久化等到点"保存设置与曲线"时一起做，
+// 这样"切换后未保存就关闭"会自动回滚，不会留下与 fan.source 不一致的脏状态。
+function bindSourceModeSwitcher() {
+    const switcher = document.getElementById("fe-source-mode");
+    if (!switcher) return;
+    switcher.addEventListener("click", ev => {
+        const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>("button[data-source-mode]");
+        if (!btn) return;
+        const mode: SourceMode = btn.dataset.sourceMode === "advanced" ? "advanced" : "simple";
+        if (config.global.source_mode === mode) return;
+        config.global.source_mode = mode;
+        applySourceModeUI(mode);
     });
 }
 
@@ -1006,6 +1544,7 @@ async function ensureAuth(): Promise<boolean> {
     }
 
     errEl.classList.add("hidden");
+    dlg.addEventListener("cancel", e => e.preventDefault());
     dlg.showModal();
 
     return new Promise(resolve => {
@@ -1063,6 +1602,7 @@ async function main() {
     $("scan-add-selected").addEventListener("click", () => addScannedFansFromSelection().catch(console.error));
 
     $("btn-global-save").addEventListener("click", async () => {
+        readSensorMgrIntoConfig();
         config.global = readGlobalForm();
         try {
             await setGlobalConfig(config.global);
@@ -1090,6 +1630,8 @@ async function main() {
         try {
             await saveConfig(config);
             await setFanCurve(fan.id, fan.curve);
+            // 标记"已保存"，关闭事件就不再回滚 source_mode
+            originalSourceMode = null;
             fanDlg.close();
             editFanIdx = null;
             // 使用已更新的配置刷新风扇卡片
@@ -1102,9 +1644,18 @@ async function main() {
     });
     fanDlg.addEventListener("close", () => {
         editFanIdx = null;
+        // 用户取消 / 关闭 / Esc 时，把对话框内修改但未保存的 source_mode 回滚
+        if (originalSourceMode !== null) {
+            config.global.source_mode = originalSourceMode;
+            originalSourceMode = null;
+        }
     });
 
     bindFanRoot();
+    bindSourceModeSwitcher();
+    bindSourceDropdown();
+    bindCollapsible("fan-params-toggle", "fan-params-panel", "fan-params-chevron");
+    bindCollapsible("sensor-mgr-toggle", "sensor-mgr-panel", "sensor-mgr-chevron", renderSensorMgrTable);
     initHistoryChart();
 
     await refresh();

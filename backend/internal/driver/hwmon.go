@@ -108,3 +108,70 @@ func readIntFile(path string) (int, error) {
 	}
 	return strconv.Atoi(strings.TrimSpace(string(raw)))
 }
+
+// TempChannel 描述一个 hwmon 温度通道的元数据。
+type TempChannel struct {
+	ID     string
+	Chip   string
+	Device string
+	Key    string
+	Label  string
+	Path   string
+}
+
+// ScanTempChannels 通用扫描所有 hwmon 温度通道。
+// 不做任何品牌识别，原样输出 chip / device / label，分类与展示完全交给上层。
+func (d *HWMONDriver) ScanTempChannels() ([]TempChannel, error) {
+	entries, err := filepath.Glob("/sys/class/hwmon/hwmon*/temp*_input")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]TempChannel, 0, len(entries))
+	for _, p := range entries {
+		dir := filepath.Dir(p)
+		key := strings.TrimSuffix(filepath.Base(p), "_input")
+		chip := readTrimmed(filepath.Join(dir, "name"), filepath.Base(dir))
+
+		device := ""
+		if link, err := os.Readlink(filepath.Join(dir, "device")); err == nil {
+			device = filepath.Base(link)
+		}
+
+		label := readTrimmed(filepath.Join(dir, key+"_label"), "")
+
+		out = append(out, TempChannel{
+			ID:     chip + "/" + device + "/" + key,
+			Chip:   chip,
+			Device: device,
+			Key:    key,
+			Label:  label,
+			Path:   p,
+		})
+	}
+	return out, nil
+}
+
+// ReadTemp 读取单个温度通道（mC → °C），过滤明显异常值。
+func (d *HWMONDriver) ReadTemp(path string) (*float64, error) {
+	if err := ValidateHwmonPath(path); err != nil {
+		return nil, err
+	}
+	raw, err := readIntFile(path)
+	if err != nil {
+		return nil, err
+	}
+	t := float64(raw) / 1000.0
+	if t < -10 || t > 130 {
+		return nil, fmt.Errorf("温度异常：%.1f°C", t)
+	}
+	return &t, nil
+}
+
+func readTrimmed(path, def string) string {
+	if raw, err := os.ReadFile(path); err == nil {
+		if s := strings.TrimSpace(string(raw)); s != "" {
+			return s
+		}
+	}
+	return def
+}

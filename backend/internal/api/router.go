@@ -28,7 +28,9 @@ func NewRouter(staticFS fs.FS, controller *service.Controller, store *service.St
 		controller: controller,
 		store:      store,
 		auth:       auth,
-		upgrader:   websocket.Upgrader{},
+		upgrader: websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool { return true },
+		},
 	}
 
 	router := gin.Default()

@@ -71,8 +71,8 @@ func main() {
 	if err != nil {
 		logrus.Fatalf("[主程序] 加载配置失败：%v", err)
 	}
-	if store.Get().Global.LogLevel != "" {
-		logging.SetLevel(store.Get().Global.LogLevel)
+	if logLevel := store.Get().Global.LogLevel; logLevel != "" {
+		logging.SetLevel(logLevel)
 	}
 
 	tokenPath := resolveTokenPath()
