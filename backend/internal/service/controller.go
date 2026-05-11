@@ -30,10 +30,10 @@ type Controller struct {
 	stopped             bool
 	loopDoneCh          chan struct{}
 	startTime           time.Time
-	lastCPUHistoryTime  time.Time // CPU 历史上次记录时间
-	lastGPUHistoryTime  time.Time // GPU 历史上次记录时间
-	lastDiskHistoryTime time.Time // 磁盘历史上次记录时间
-	lastFanHistoryTime  time.Time // 风扇历史上次记录时间
+	lastCPUHistoryTime  time.Time            // CPU 历史上次记录时间
+	lastGPUHistoryTime  time.Time            // GPU 历史上次记录时间
+	lastDiskHistoryTime time.Time            // 磁盘历史上次记录时间
+	lastFanHistoryTime  time.Time            // 风扇历史上次记录时间
 	sensorChans         []driver.TempChannel // 缓存 hwmon 温度通道列表
 	lastSensorScan      time.Time            // 上次扫描时间
 }
@@ -280,9 +280,8 @@ func (c *Controller) calculateTargetPWM(
 }
 
 // applyStopHysteresis 滞回停转逻辑
-// 启动温度：曲线首点温度
-// 停止温度：曲线首点温度 - 滞回值
-// 滞回区间内保持最后有效 PWM
+// interpolateCurve 在温度 < 首点时输出 0。本函数在 [首点−滞回, 首点) 内维持「曾在首点以上」时的最后有效 PWM，
+// 直到温度 < 首点−滞回 才真正停转并清除记忆。温度 ≥ 首点时完全按曲线 basePWM 运行。
 func (c *Controller) applyStopHysteresis(fanID string, curve []model.CurvePoint, temp float64, basePWM int, hysteresis float64) int {
 	if len(curve) == 0 || hysteresis <= 0 {
 		return basePWM
@@ -291,42 +290,34 @@ func (c *Controller) applyStopHysteresis(fanID string, curve []model.CurvePoint,
 	firstTemp := curve[0].Temp
 	stopThreshold := firstTemp - hysteresis
 
-	// 温度低于停止阈值
+	// 1. 低于停转阈值（首点 − 滞回）：停转并清除滞回记忆，避免低温回升误用旧 PWM
 	if temp < stopThreshold {
-		// 风扇正在转动 -> 记录当前PWM为最后有效值，然后停转
 		c.mu.Lock()
-		if basePWM > 0 {
-			c.lastValidPWM[fanID] = basePWM
-		}
+		delete(c.lastValidPWM, fanID)
 		c.mu.Unlock()
-		logrus.Debugf("[滞回] 温度%.1f°C < 停转阈值%.1f°C，停转", temp, stopThreshold)
+		logrus.Debugf("[滞回] 温度%.1f°C < 停转阈值%.1f°C（首点%.1f°C − 滞回%.1f°C），停转并清除记忆", temp, stopThreshold, firstTemp, hysteresis)
 		return 0
 	}
 
-	// 温度在滞回区间（stopThreshold <= temp < firstTemp）
-	if temp < firstTemp && basePWM == 0 {
-		// 风扇已停转，滞回区间内保持停转
-		logrus.Debugf("[滞回] 温度%.1f°C 在滞回区间[%.1f~%.1f]，保持停转", temp, stopThreshold, firstTemp)
-		return 0
-	}
-
-	// 温度在滞回区间内，但曲线计算值非0
+	// 2. [停转阈值, 首点)：曲线 basePWM 为 0；若曾在首点以上运行过则维持 lastValid，否则跟随曲线（通常为停）
 	if temp < firstTemp {
-		// 返回最后有效 PWM（防止启停）
 		c.mu.Lock()
-		if lastValid, ok := c.lastValidPWM[fanID]; ok && lastValid > 0 {
-			c.mu.Unlock()
-			logrus.Debugf("[滞回] 温度%.1f°C 在滞回区间，保留最后有效PWM=%d", temp, lastValid)
+		lastValid, has := c.lastValidPWM[fanID]
+		c.mu.Unlock()
+		if has && lastValid > 0 {
+			logrus.Debugf("[滞回] 温度%.1f°C ∈ [%.1f, %.1f)℃，维持最后有效PWM=%d", temp, stopThreshold, firstTemp, lastValid)
 			return lastValid
 		}
-		c.mu.Unlock()
+		logrus.Debugf("[滞回] 温度%.1f°C ∈ [%.1f, %.1f)℃ 无滞回历史，曲线PWM=%d", temp, stopThreshold, firstTemp, basePWM)
 		return basePWM
 	}
 
-	// 温度 >= 首点温度，正常按曲线计算
+	// 3. 温度 ≥ 首点：按曲线；有转速则记入供降温滞回，曲线为 0 则清记忆以免脏数据
 	c.mu.Lock()
 	if basePWM > 0 {
 		c.lastValidPWM[fanID] = basePWM
+	} else {
+		delete(c.lastValidPWM, fanID)
 	}
 	c.mu.Unlock()
 	return basePWM
