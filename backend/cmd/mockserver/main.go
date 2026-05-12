@@ -3,8 +3,10 @@
 // 它复用真实后端的 model 类型，确保接口形态与生产 100% 一致。
 //
 // 运行方式（Windows PowerShell）：
-//   cd backend
-//   go run ./cmd/mockserver
+//
+//	cd backend
+//	go run ./cmd/mockserver
+//
 // 默认监听 :19528，与 frontend/vite.config.ts 的 proxy 目标对齐。
 package main
 
@@ -39,17 +41,24 @@ func newMockState() *mockState {
 }
 
 func defaultConfig() model.Config {
+	dz1, hys1, em1 := 5, 2.0, 80.0
+	dz2, hys2, em2 := 5, 2.0, 80.0
 	return model.Config{
+		Version: model.CurrentConfigVersion,
 		Fans: []model.FanConfig{
 			{
-				ID:         "mock-pwm1",
-				Name:       "CPU 风扇",
-				PWMPath:    "/mock/hwmon0/pwm1",
-				RPMPath:    "/mock/hwmon0/fan1_input",
-				EnablePath: "/mock/hwmon0/pwm1_enable",
-				Mode:       model.FanModeCurve,
-				Source:     "cpu",
-				ManualPWM:  128,
+				ID:             "mock-pwm1",
+				Name:           "CPU 风扇",
+				PWMPath:        "/mock/hwmon0/pwm1",
+				RPMPath:        "/mock/hwmon0/fan1_input",
+				EnablePath:     "/mock/hwmon0/pwm1_enable",
+				Mode:           model.FanModeCurve,
+				Source:         "cpu",
+				ManualPWM:      128,
+				FallbackPolicy: model.FallbackKeepLast,
+				PWMDeadzone:    &dz1,
+				StopHysteresis: &hys1,
+				EmergencyTemp:  &em1,
 				Curve: []model.CurvePoint{
 					{Temp: 35, PWM: 80},
 					{Temp: 55, PWM: 150},
@@ -57,12 +66,16 @@ func defaultConfig() model.Config {
 				},
 			},
 			{
-				ID:        "mock-pwm2",
-				Name:      "机箱风扇",
-				PWMPath:   "/mock/hwmon0/pwm2",
-				Mode:      model.FanModeManual,
-				Source:    "max",
-				ManualPWM: 100,
+				ID:             "mock-pwm2",
+				Name:           "机箱风扇",
+				PWMPath:        "/mock/hwmon0/pwm2",
+				Mode:           model.FanModeManual,
+				Source:         "max",
+				ManualPWM:      100,
+				FallbackPolicy: model.FallbackKeepLast,
+				PWMDeadzone:    &dz2,
+				StopHysteresis: &hys2,
+				EmergencyTemp:  &em2,
 				Curve: []model.CurvePoint{
 					{Temp: 30, PWM: 60},
 					{Temp: 60, PWM: 200},

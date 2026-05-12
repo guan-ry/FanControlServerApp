@@ -18,7 +18,7 @@ import {
     setGlobalConfig,
     setStoredToken,
 } from "./api";
-import type {ConfigPayload, CurvePoint, FanConfig, GlobalConfig, ScannedFan, SensorReading, Telemetry} from "./types";
+import type {ConfigPayload, CurvePoint, FanConfig, GlobalConfig, ScannedFan, Telemetry} from "./types";
 
 const DEFAULT_CURVE: CurvePoint[] = [
     {temp: 30, pwm: 80},
@@ -26,17 +26,18 @@ const DEFAULT_CURVE: CurvePoint[] = [
     {temp: 75, pwm: 255}
 ];
 
-const emptyGlobal = (): GlobalConfig => ({
-    pwm_deadzone: 5,
-    update_interval_ms: 2000,
-    emergency_temp: 80,
-    stop_behavior: "set",
-    stop_pwm: 200,
-    stop_hysteresis: 2,
-    log_level: "info"
-});
-
-let config: ConfigPayload = {fans: [], global: emptyGlobal()};
+let config: ConfigPayload = {
+    fans: [],
+    global: {
+        pwm_deadzone: 5,
+        update_interval_ms: 2000,
+        emergency_temp: 80,
+        stop_behavior: "set",
+        stop_pwm: 200,
+        stop_hysteresis: 2,
+        log_level: "info"
+    }
+};
 let telemetry: Telemetry | undefined;
 
 let fanCurveChart: echarts.ECharts | null = null;
@@ -555,7 +556,9 @@ function collectSourceGroups(mode: "simple" | "advanced"): SourceGroup[] {
         }));
         items.push({v: "disk_avg", name: "硬盘平均"});
         items.push({v: "disk_max", name: "硬盘最大"});
-        items.forEach(it => { if (!it.sleep) it.temp = resolveSourceTemp(it.v); });
+        items.forEach(it => {
+            if (!it.sleep) it.temp = resolveSourceTemp(it.v);
+        });
         return [{label: "常用温度源", items}];
     }
 
@@ -574,7 +577,7 @@ function collectSourceGroups(mode: "simple" | "advanced"): SourceGroup[] {
 
 // renderSourceOptions 生成自定义下拉浮层的 innerHTML。
 // 每行用 flex 实现真正的左右两端对齐：源名靠左、温度靠右。
-function renderSourceOptions(current: string, mode: "simple" | "advanced"): string {
+function renderSourceOptions(current: string, mode: "simple" | "advanced", comboStrategyRadioName = "combo-strategy"): string {
     const groups = collectSourceGroups(mode);
     let html = "";
     let currentInList = false;
@@ -615,14 +618,15 @@ function renderSourceOptions(current: string, mode: "simple" | "advanced"): stri
 
     // 高级模式：在 sensor 列表下方追加组合温度源区域
     if (mode === "advanced") {
-        html += renderComboSection(current);
+        html += renderComboSection(current, comboStrategyRadioName);
     }
 
     return html;
 }
 
 // 渲染高级模式底部的"组合温度源"区域（内嵌在同一浮层中）。
-function renderComboSection(currentSource: string): string {
+// comboStrategyRadioName 需唯一，避免主温度源与后备源两个浮层同时存在时 radio 同名冲突。
+function renderComboSection(currentSource: string, comboStrategyRadioName: string): string {
     const items = collectAllSourceItems();
     const combo = parseComboSource(currentSource);
     const selected = new Set<string>(combo?.keys ?? []);
@@ -633,17 +637,17 @@ function renderComboSection(currentSource: string): string {
     const countSelected = selected.size;
 
     let html = `
-<div class="border-t-2 border-sky-500/30 mt-1">
+<div class="border-t-2 border-sky-500/30 mt-1" data-combo-radio-name="${esc(comboStrategyRadioName)}">
     <div class="px-3 py-1.5 text-[10px] uppercase tracking-wider text-sky-400 bg-slate-900 sticky top-0 z-10 border-b border-slate-700/50 flex items-center justify-between">
         <span>组合温度源</span>
         <div class="flex items-center gap-3 normal-case tracking-normal">
             <label class="flex items-center gap-1 cursor-pointer">
-                <input type="radio" name="combo-strategy" value="avg" ${strategy === "avg" ? "checked" : ""}
+                <input type="radio" name="${esc(comboStrategyRadioName)}" value="avg" ${strategy === "avg" ? "checked" : ""}
                        class="accent-sky-500 w-3 h-3"/>
                 <span class="text-[11px] text-slate-300">平均</span>
             </label>
             <label class="flex items-center gap-1 cursor-pointer">
-                <input type="radio" name="combo-strategy" value="max" ${strategy === "max" ? "checked" : ""}
+                <input type="radio" name="${esc(comboStrategyRadioName)}" value="max" ${strategy === "max" ? "checked" : ""}
                        class="accent-sky-500 w-3 h-3"/>
                 <span class="text-[11px] text-slate-300">最大</span>
             </label>
@@ -667,11 +671,11 @@ function renderComboSection(currentSource: string): string {
     html += `
 <div class="sticky bottom-0 bg-slate-900 border-t border-slate-700/50 px-3 py-2 flex items-center justify-between gap-3">
     <div class="text-xs text-slate-400">
-        已选 <span id="combo-count" class="text-sky-400 font-bold">${countSelected}</span> 个
+        已选 <span data-combo-count class="text-sky-400 font-bold">${countSelected}</span> 个
         <span class="mx-1">·</span>
-        计算值: <span id="combo-preview" class="text-sky-400 font-mono">${esc(fmtTemp(computedTemp))}</span>
+        计算值: <span data-combo-preview class="text-sky-400 font-mono">${esc(fmtTemp(computedTemp))}</span>
     </div>
-    <button type="button" id="combo-confirm"
+    <button type="button" data-combo-confirm
             class="px-4 py-1.5 rounded-lg text-xs font-medium ${countSelected >= 2 ? "bg-sky-600 text-white hover:bg-sky-500" : "bg-slate-700 text-slate-500 cursor-not-allowed"}"
             ${countSelected < 2 ? "disabled" : ""}>
         确定组合
@@ -706,6 +710,17 @@ function setSourceValue(value: string) {
 
     const warn = document.getElementById("fe-source-warn");
     if (warn) warn.classList.toggle("hidden", !hasSataDisk(value));
+}
+
+function setFallbackSourceValue(value: string) {
+    const input = document.getElementById("fe-fb-source") as HTMLInputElement | null;
+    if (input) input.value = value;
+    const display = document.getElementById("fe-fb-source-display");
+    if (display) {
+        const t = resolveSourceTemp(value);
+        const tempPart = t != null ? ` · ${t.toFixed(1)}°C` : "";
+        display.textContent = `${getSourceLabel(value)}${tempPart}`;
+    }
 }
 
 function getSourceLabel(source: string): string {
@@ -766,36 +781,34 @@ function collectAllSourceItems(): SourceItem[] {
 // 解析 combo source 字符串，返回 {strategy, keys}。
 function parseComboSource(source: string): { strategy: "avg" | "max"; keys: string[] } | null {
     if (source.startsWith("combo_avg:")) {
-        return { strategy: "avg", keys: source.slice("combo_avg:".length).split(",").map(k => k.trim()).filter(Boolean) };
+        return {strategy: "avg", keys: source.slice("combo_avg:".length).split(",").map(k => k.trim()).filter(Boolean)};
     }
     if (source.startsWith("combo_max:")) {
-        return { strategy: "max", keys: source.slice("combo_max:".length).split(",").map(k => k.trim()).filter(Boolean) };
+        return {strategy: "max", keys: source.slice("combo_max:".length).split(",").map(k => k.trim()).filter(Boolean)};
     }
     return null;
 }
 
 
-
-// 从面板当前勾选状态生成 combo source 字符串。
-function buildComboSourceFromPanel(): string {
-    const menu = document.getElementById("fe-source-menu");
-    if (!menu) return "";
+// 从面板当前勾选状态生成 combo source 字符串（menu 为下拉浮层根节点）。
+function buildComboSourceFromPanel(menu: HTMLElement): string {
     const boxes = menu.querySelectorAll<HTMLInputElement>("input[data-combo-cb]:checked");
     const keys = Array.from(boxes).map(cb => cb.value);
-    const strategyRadio = menu.querySelector<HTMLInputElement>("input[name='combo-strategy']:checked");
+    const radioName = menu.querySelector("[data-combo-radio-name]")?.getAttribute("data-combo-radio-name") ?? "combo-strategy";
+    const strategyRadio = menu.querySelector<HTMLInputElement>(
+        `input[type="radio"][name="${CSS.escape(radioName)}"]:checked`,
+    );
     const strategy = strategyRadio?.value === "max" ? "max" : "avg";
     if (keys.length < 2) return "";
     return `combo_${strategy}:${keys.join(",")}`;
 }
 
-// 更新面板底部预览（实时计算）。
-function updateComboPreview() {
-    const source = buildComboSourceFromPanel();
-    const countEl = document.getElementById("combo-count");
-    const previewEl = document.getElementById("combo-preview");
-    const confirmBtn = document.getElementById("combo-confirm") as HTMLButtonElement | null;
-    const menu = document.getElementById("fe-source-menu");
-    if (!menu) return;
+// 更新面板底部预览（实时计算）；menu 为包含组合区的浮层根节点。
+function updateComboPreview(menu: HTMLElement) {
+    const source = buildComboSourceFromPanel(menu);
+    const countEl = menu.querySelector("[data-combo-count]");
+    const previewEl = menu.querySelector("[data-combo-preview]");
+    const confirmBtn = menu.querySelector("[data-combo-confirm]") as HTMLButtonElement | null;
     const boxes = menu.querySelectorAll<HTMLInputElement>("input[data-combo-cb]:checked");
     const count = boxes.length;
 
@@ -825,6 +838,11 @@ function applySourceModeUI(mode: SourceMode) {
     const input = document.getElementById("fe-source") as HTMLInputElement | null;
     if (menu && input) {
         menu.innerHTML = renderSourceOptions(input.value, mode);
+    }
+    const fbMenu = document.getElementById("fe-fb-source-menu");
+    const fbInput = document.getElementById("fe-fb-source") as HTMLInputElement | null;
+    if (fbMenu && fbInput) {
+        fbMenu.innerHTML = renderSourceOptions(fbInput.value, mode, "combo-strategy-fb");
     }
 }
 
@@ -1094,15 +1112,31 @@ function loadCurveIntoEditor() {
     updateFanCurveDataAndGraphic();
 }
 
+/** 当所有风扇均已单独设置某项时，隐藏系统设置中对应全局项（以各风扇为准）。 */
+function updateGlobalTuningRowVisibility() {
+    const fans = config.fans;
+    const n = fans.length;
+    const allDz = n > 0 && fans.every(f => f.pwm_deadzone != null);
+    const allH = n > 0 && fans.every(f => f.stop_hysteresis != null);
+    const allE = n > 0 && fans.every(f => f.emergency_temp != null);
+    document.getElementById("g-row-deadzone")?.classList.toggle("hidden", allDz);
+    document.getElementById("g-row-hysteresis")?.classList.toggle("hidden", allH);
+    document.getElementById("g-row-emergency")?.classList.toggle("hidden", allE);
+}
+
 function fillGlobalForm() {
     const g = config.global;
-    ($("g-deadzone") as HTMLInputElement).value = String(g.pwm_deadzone);
+    const dz = document.getElementById("g-deadzone") as HTMLInputElement | null;
+    if (dz) dz.value = String(g.pwm_deadzone);
+    const hy = document.getElementById("g-hysteresis") as HTMLInputElement | null;
+    if (hy) hy.value = String(g.stop_hysteresis);
+    const em = document.getElementById("g-emergency") as HTMLInputElement | null;
+    if (em) em.value = String(g.emergency_temp);
     ($("g-interval") as HTMLInputElement).value = String(Math.round(g.update_interval_ms / 1000));
-    ($("g-emergency") as HTMLInputElement).value = String(g.emergency_temp);
     ($("g-stop-beh") as HTMLSelectElement).value = g.stop_behavior;
     ($("g-stop-pwm") as HTMLInputElement).value = String(g.stop_pwm);
-    ($("g-hysteresis") as HTMLInputElement).value = String(g.stop_hysteresis);
     updateStopPWMRow();
+    updateGlobalTuningRowVisibility();
 }
 
 // 渲染传感器管理面板的表格行
@@ -1204,15 +1238,53 @@ function clampPWM(v: number): number {
 
 function readGlobalForm(): GlobalConfig {
     const stopBeh = ($("g-stop-beh") as HTMLSelectElement).value;
-    return {
+    const out: GlobalConfig = {
         ...config.global,
-        pwm_deadzone: clampPWM(Number(($("g-deadzone") as HTMLInputElement).value) || 0),
         update_interval_ms: Math.max(1000, Number(($("g-interval") as HTMLInputElement).value) * 1000) || 2000,
-        emergency_temp: Math.max(0, Number(($("g-emergency") as HTMLInputElement).value) || 80),
         stop_behavior: stopBeh === "set" ? "set" : "keep",
         stop_pwm: clampPWM(Number(($("g-stop-pwm") as HTMLInputElement).value) || 200),
-        stop_hysteresis: Math.max(0, Number(($("g-hysteresis") as HTMLInputElement).value) || 2),
     };
+    const dzEl = document.getElementById("g-deadzone") as HTMLInputElement | null;
+    const dzRow = document.getElementById("g-row-deadzone");
+    if (dzEl && dzRow && !dzRow.classList.contains("hidden")) {
+        out.pwm_deadzone = clampPWM(Number(dzEl.value) || 0);
+    }
+    const hyEl = document.getElementById("g-hysteresis") as HTMLInputElement | null;
+    const hyRow = document.getElementById("g-row-hysteresis");
+    if (hyEl && hyRow && !hyRow.classList.contains("hidden")) {
+        out.stop_hysteresis = Math.max(0, Number(hyEl.value) || 2);
+    }
+    const emEl = document.getElementById("g-emergency") as HTMLInputElement | null;
+    const emRow = document.getElementById("g-row-emergency");
+    if (emEl && emRow && !emRow.classList.contains("hidden")) {
+        out.emergency_temp = Math.max(0, Number(emEl.value) || 80);
+    }
+    return out;
+}
+
+function updateFallbackPolicyVisibility() {
+    const pol = ($("fe-fallback-policy") as HTMLSelectElement).value;
+    ($("fe-fallback-min-row") as HTMLElement).classList.toggle("hidden", pol !== "min_pwm");
+    ($("fe-fallback-follow-row") as HTMLElement).classList.toggle("hidden", pol !== "follow_other");
+}
+
+// ---------- 风扇编辑弹窗打开/关闭与 body 滚动锁定 ----------
+let fanEditDialog: HTMLDialogElement | null = null;
+
+function openFanEditDialogWithLock() {
+    if (!fanEditDialog) return;
+    if (fanEditDialog.open) {
+        fanEditDialog.close();
+    }
+    fanEditDialog.showModal();
+
+    // 重置滚动位置到顶部
+    requestAnimationFrame(() => {
+        const scrollArea = fanEditDialog.querySelector('.flex-1.min-h-0.overflow-y-auto');
+        if (scrollArea) {
+            scrollArea.scrollTop = 0;
+        }
+    });
 }
 
 function openFanSettingsDialog(idx: number) {
@@ -1237,8 +1309,26 @@ function openFanSettingsDialog(idx: number) {
     initFanCurveChartShell();
     loadCurveIntoEditor();
 
-    const dlg = $("fan-edit-dialog") as HTMLDialogElement;
-    dlg.showModal();
+    ($("fe-deadzone") as HTMLInputElement).value =
+        fan.pwm_deadzone != null && !Number.isNaN(fan.pwm_deadzone) ? String(fan.pwm_deadzone) : "";
+    ($("fe-hysteresis") as HTMLInputElement).value =
+        fan.stop_hysteresis != null && !Number.isNaN(fan.stop_hysteresis) ? String(fan.stop_hysteresis) : "";
+    ($("fe-emergency") as HTMLInputElement).value =
+        fan.emergency_temp != null && !Number.isNaN(fan.emergency_temp) ? String(fan.emergency_temp) : "";
+
+    const polRaw = fan.fallback_policy;
+    const pol =
+        polRaw === "stop" || polRaw === "min_pwm" || polRaw === "full_speed" || polRaw === "follow_other"
+            ? polRaw
+            : "keep_last";
+    ($("fe-fallback-policy") as HTMLSelectElement).value = pol;
+    ($("fe-fallback-min-pwm") as HTMLInputElement).value =
+        fan.fallback_min_pwm != null && fan.fallback_min_pwm > 0 ? String(fan.fallback_min_pwm) : "80";
+    setFallbackSourceValue((fan.fallback_follow_source ?? "").trim() || "cpu");
+    closeFallbackSourceMenu();
+    updateFallbackPolicyVisibility();
+
+    openFanEditDialogWithLock();
     requestAnimationFrame(() => {
         fanCurveChart?.resize();
         updateFanCurveGraphic();
@@ -1254,6 +1344,52 @@ function readFanFormIntoConfig(): FanConfig | null {
     fan.rpm_path = ($("fe-rpm") as HTMLInputElement).value.trim();
     fan.enable_path = ($("fe-en") as HTMLInputElement).value.trim();
     fan.source = ($("fe-source") as HTMLInputElement).value;
+
+    const dz = ($("fe-deadzone") as HTMLInputElement).value.trim();
+    if (dz === "") {
+        delete fan.pwm_deadzone;
+    } else {
+        const n = Number(dz);
+        if (!Number.isFinite(n)) delete fan.pwm_deadzone;
+        else fan.pwm_deadzone = clampPWM(n);
+    }
+    const hy = ($("fe-hysteresis") as HTMLInputElement).value.trim();
+    if (hy === "") {
+        delete fan.stop_hysteresis;
+    } else {
+        const n = Number(hy);
+        if (!Number.isFinite(n)) delete fan.stop_hysteresis;
+        else fan.stop_hysteresis = Math.max(0, Math.min(30, n));
+    }
+    const em = ($("fe-emergency") as HTMLInputElement).value.trim();
+    if (em === "") {
+        delete fan.emergency_temp;
+    } else {
+        const n = Number(em);
+        if (!Number.isFinite(n)) delete fan.emergency_temp;
+        else fan.emergency_temp = Math.max(1, Math.min(120, n));
+    }
+
+    const pol = ($("fe-fallback-policy") as HTMLSelectElement).value;
+    if (pol === "keep_last") {
+        delete fan.fallback_policy;
+        delete fan.fallback_min_pwm;
+        delete fan.fallback_follow_source;
+    } else {
+        fan.fallback_policy = pol;
+        if (pol === "min_pwm") {
+            const n = Number(($("fe-fallback-min-pwm") as HTMLInputElement).value);
+            fan.fallback_min_pwm = Number.isFinite(n) ? clampPWM(n) : 80;
+            if (fan.fallback_min_pwm <= 0) fan.fallback_min_pwm = 80;
+        } else {
+            delete fan.fallback_min_pwm;
+        }
+        if (pol === "follow_other") {
+            fan.fallback_follow_source = ($("fe-fb-source") as HTMLInputElement).value.trim() || "cpu";
+        } else {
+            delete fan.fallback_follow_source;
+        }
+    }
     return fan;
 }
 
@@ -1357,6 +1493,28 @@ function isSourceMenuOpen(): boolean {
     return !!menu && !menu.classList.contains("hidden");
 }
 
+function openFallbackSourceMenu() {
+    const menu = document.getElementById("fe-fb-source-menu");
+    const chevron = document.getElementById("fe-fb-source-chevron");
+    if (menu) {
+        menu.classList.remove("hidden");
+        menu.scrollTop = 0;
+    }
+    if (chevron) chevron.style.transform = "rotate(180deg)";
+}
+
+function closeFallbackSourceMenu() {
+    const menu = document.getElementById("fe-fb-source-menu");
+    const chevron = document.getElementById("fe-fb-source-chevron");
+    if (menu) menu.classList.add("hidden");
+    if (chevron) chevron.style.transform = "";
+}
+
+function isFallbackSourceMenuOpen(): boolean {
+    const menu = document.getElementById("fe-fb-source-menu");
+    return !!menu && !menu.classList.contains("hidden");
+}
+
 function bindSourceDropdown() {
     const btn = document.getElementById("fe-source-btn");
     const menu = document.getElementById("fe-source-menu");
@@ -1368,6 +1526,7 @@ function bindSourceDropdown() {
         if (isSourceMenuOpen()) {
             closeSourceMenu();
         } else {
+            closeFallbackSourceMenu();
             const mode = resolveSourceMode();
             const input = document.getElementById("fe-source") as HTMLInputElement | null;
             menu.innerHTML = renderSourceOptions(input?.value ?? "", mode);
@@ -1389,9 +1548,9 @@ function bindSourceDropdown() {
         }
 
         // 组合模式：确认按钮
-        const confirm = (ev.target as HTMLElement).closest("#combo-confirm") as HTMLButtonElement | null;
+        const confirm = (ev.target as HTMLElement).closest("[data-combo-confirm]") as HTMLButtonElement | null;
         if (confirm && !confirm.disabled) {
-            const src = buildComboSourceFromPanel();
+            const src = buildComboSourceFromPanel(menu);
             if (src) {
                 setSourceValue(src);
                 closeSourceMenu();
@@ -1402,8 +1561,8 @@ function bindSourceDropdown() {
     // 组合模式：checkbox / radio 变化 → 更新预览
     menu.addEventListener("change", ev => {
         const t = ev.target as HTMLInputElement;
-        if (t.dataset.comboCb !== undefined || t.name === "combo-strategy") {
-            updateComboPreview();
+        if (t.dataset.comboCb !== undefined || (t.type === "radio" && t.name.startsWith("combo-strat"))) {
+            updateComboPreview(menu);
         }
     });
 
@@ -1418,6 +1577,67 @@ function bindSourceDropdown() {
     document.addEventListener("keydown", ev => {
         if (ev.key === "Escape" && isSourceMenuOpen()) {
             closeSourceMenu();
+            ev.stopPropagation();
+        }
+    });
+}
+
+function bindFallbackSourceDropdown() {
+    const btn = document.getElementById("fe-fb-source-btn");
+    const menu = document.getElementById("fe-fb-source-menu");
+    const wrapper = document.getElementById("fe-fb-source-wrapper");
+    if (!btn || !menu || !wrapper) return;
+
+    btn.addEventListener("click", ev => {
+        ev.stopPropagation();
+        if (isFallbackSourceMenuOpen()) {
+            closeFallbackSourceMenu();
+        } else {
+            closeSourceMenu();
+            const mode = resolveSourceMode();
+            const input = document.getElementById("fe-fb-source") as HTMLInputElement | null;
+            menu.innerHTML = renderSourceOptions(input?.value ?? "", mode, "combo-strategy-fb");
+            openFallbackSourceMenu();
+        }
+    });
+
+    menu.addEventListener("click", ev => {
+        const target = (ev.target as HTMLElement).closest<HTMLButtonElement>("button[data-source-value]");
+        if (target) {
+            const v = target.dataset.sourceValue;
+            if (v === undefined) return;
+            setFallbackSourceValue(v);
+            const mode = resolveSourceMode();
+            menu.innerHTML = renderSourceOptions(v, mode, "combo-strategy-fb");
+            closeFallbackSourceMenu();
+            return;
+        }
+        const confirm = (ev.target as HTMLElement).closest("[data-combo-confirm]") as HTMLButtonElement | null;
+        if (confirm && !confirm.disabled) {
+            const src = buildComboSourceFromPanel(menu);
+            if (src) {
+                setFallbackSourceValue(src);
+                closeFallbackSourceMenu();
+            }
+        }
+    });
+
+    menu.addEventListener("change", ev => {
+        const t = ev.target as HTMLInputElement;
+        if (t.dataset.comboCb !== undefined || (t.type === "radio" && t.name.startsWith("combo-strat"))) {
+            updateComboPreview(menu);
+        }
+    });
+
+    document.addEventListener("click", ev => {
+        if (!isFallbackSourceMenuOpen()) return;
+        if (wrapper.contains(ev.target as Node)) return;
+        closeFallbackSourceMenu();
+    });
+
+    document.addEventListener("keydown", ev => {
+        if (ev.key === "Escape" && isFallbackSourceMenuOpen()) {
+            closeFallbackSourceMenu();
             ev.stopPropagation();
         }
     });
@@ -1620,9 +1840,62 @@ async function main() {
 
     $("g-stop-beh").addEventListener("change", updateStopPWMRow);
 
-    const fanDlg = $("fan-edit-dialog") as HTMLDialogElement;
-    $("fe-close").addEventListener("click", () => fanDlg.close());
-    $("fe-cancel").addEventListener("click", () => fanDlg.close());
+    fanEditDialog = $("fan-edit-dialog") as HTMLDialogElement;
+
+    function safeCloseFanEditDialog() {
+        if (!fanEditDialog) return;
+        fanEditDialog.close();
+        closeFallbackSourceMenu();
+        closeSourceMenu();
+        editFanIdx = null;
+        if (originalSourceMode !== null) {
+            config.global.source_mode = originalSourceMode;
+            originalSourceMode = null;
+        }
+    }
+
+
+    // 关闭按钮 —— 直接用普通事件绑定，不克隆
+    const closeBtn = document.getElementById("fe-close");
+    if (closeBtn) {
+        // 移除所有已有监听器（通过替换，简单粗暴）
+        const newCloseBtn = closeBtn.cloneNode(true);
+        closeBtn.parentNode?.replaceChild(newCloseBtn, closeBtn);
+        newCloseBtn.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            safeCloseFanEditDialog();
+        });
+    }
+
+    // 取消按钮
+    const cancelBtn = document.getElementById("fe-cancel");
+    if (cancelBtn) {
+        const newCancelBtn = cancelBtn.cloneNode(true);
+        cancelBtn.parentNode?.replaceChild(newCancelBtn, cancelBtn);
+        newCancelBtn.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            safeCloseFanEditDialog();
+        });
+    }
+
+    // ESC 关闭
+    fanEditDialog.addEventListener("cancel", (e) => {
+        e.preventDefault();
+        safeCloseFanEditDialog();
+    });
+
+    // 弹窗关闭时的额外清理（保证恢复）
+    fanEditDialog.addEventListener("close", () => {
+        closeFallbackSourceMenu();
+        closeSourceMenu();
+        editFanIdx = null;
+        if (originalSourceMode !== null) {
+            config.global.source_mode = originalSourceMode;
+            originalSourceMode = null;
+        }
+    });
     $("fe-save").addEventListener("click", async () => {
         syncCurveToConfig();
         const fan = readFanFormIntoConfig();
@@ -1632,7 +1905,7 @@ async function main() {
             await setFanCurve(fan.id, fan.curve);
             // 标记"已保存"，关闭事件就不再回滚 source_mode
             originalSourceMode = null;
-            fanDlg.close();
+            safeCloseFanEditDialog();
             editFanIdx = null;
             // 使用已更新的配置刷新风扇卡片
             syncFanCardsFromTelemetryOrRender();
@@ -1642,19 +1915,14 @@ async function main() {
             toast(String(e), "error");
         }
     });
-    fanDlg.addEventListener("close", () => {
-        editFanIdx = null;
-        // 用户取消 / 关闭 / Esc 时，把对话框内修改但未保存的 source_mode 回滚
-        if (originalSourceMode !== null) {
-            config.global.source_mode = originalSourceMode;
-            originalSourceMode = null;
-        }
-    });
+
+    ($("fe-fallback-policy") as HTMLSelectElement).addEventListener("change", updateFallbackPolicyVisibility);
 
     bindFanRoot();
     bindSourceModeSwitcher();
     bindSourceDropdown();
-    bindCollapsible("fan-params-toggle", "fan-params-panel", "fan-params-chevron");
+    bindFallbackSourceDropdown();
+    bindCollapsible("fan-params-toggle", "fan-params-panel", "fan-params-chevron", updateGlobalTuningRowVisibility);
     bindCollapsible("sensor-mgr-toggle", "sensor-mgr-panel", "sensor-mgr-chevron", renderSensorMgrTable);
     initHistoryChart();
 

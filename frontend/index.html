@@ -66,7 +66,6 @@
             background: var(--scrollbar-thumb-hover);
         }
 
-        /* 原生 <select> 下拉滚动条与选项样式统一暗色主题 */
         select {
             scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
             scrollbar-width: thin;
@@ -158,7 +157,6 @@
             box-shadow: 0 0 15px rgba(14, 165, 233, 0.6);
         }
 
-        /* 所有 number 输入框去掉上下箭头 */
         input[type="number"]::-webkit-inner-spin-button,
         input[type="number"]::-webkit-outer-spin-button {
             -webkit-appearance: none;
@@ -214,6 +212,7 @@
         </div>
     </form>
 </dialog>
+
 <header class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
     <div>
         <div class="flex items-center gap-3">
@@ -221,19 +220,13 @@
                 <iconify-icon class="text-3xl text-sky-400" icon="mdi:snowflake"></iconify-icon>
             </div>
             <div>
-                <h1 class="text-2xl font-bold text-white tracking-tight">
-                    FanControlServer
-                </h1>
-
+                <h1 class="text-2xl font-bold text-white tracking-tight">FanControlServer</h1>
             </div>
         </div>
     </div>
     <div class="flex flex-wrap gap-3 items-center">
-        <button
-                type="button"
-                id="btn-refresh"
-                class="px-4 py-2 text-xs font-bold rounded-xl bg-slate-800 border border-slate-600 text-slate-200 hover:bg-slate-700"
-        >
+        <button type="button" id="btn-refresh"
+                class="px-4 py-2 text-xs font-bold rounded-xl bg-slate-800 border border-slate-600 text-slate-200 hover:bg-slate-700">
             刷新状态
         </button>
         <div class="glass-card px-4 py-2 flex items-center gap-3 border-l-4 border-l-sky-500">
@@ -246,7 +239,7 @@
 </header>
 
 <div class="grid grid-cols-1 gap-6">
-    <!-- 1. 系统信息 - 新布局 -->
+    <!-- 系统信息卡片（保持不变） -->
     <section class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <!-- 时间卡片 -->
         <div class="glass-card p-5 relative overflow-hidden group">
@@ -261,7 +254,6 @@
                 <span>运行时间: <span id="uptime-text" class="text-sky-400 font-mono">--</span></span>
             </div>
         </div>
-
         <!-- CPU 卡片 -->
         <div class="glass-card p-5 relative overflow-hidden group">
             <div class="flex justify-between items-center mb-3">
@@ -269,17 +261,13 @@
                 <iconify-icon class="text-xl text-sky-400" icon="mdi:cpu-64-bit"></iconify-icon>
             </div>
             <div class="flex items-center justify-between min-h-[104px]">
-                <!-- 温度信息 -->
                 <div class="flex flex-col mt-6">
-                    <div class="flex items-center gap-1 text-sm text-slate-400 mb-1">
-                        <span>温度</span>
-                    </div>
+                    <div class="flex items-center gap-1 text-sm text-slate-400 mb-1"><span>温度</span></div>
                     <div class="flex items-baseline gap-1">
                         <span class="text-2xl font-mono font-bold text-white" id="cpu-temp-text">--</span>
                         <span class="text-sm text-slate-400">°C</span>
                     </div>
                 </div>
-                <!-- SVG 圆环 -->
                 <div class="relative w-20 h-20 flex-shrink-0">
                     <svg class="w-full h-full -rotate-90" viewBox="0 0 36 36">
                         <circle cx="18" cy="18" r="15.5" fill="none" stroke="#1e293b" stroke-width="3"></circle>
@@ -293,8 +281,7 @@
                 </div>
             </div>
         </div>
-
-        <!-- 硬盘卡片 - 跨两行 -->
+        <!-- 硬盘卡片 -->
         <div class="glass-card p-5 relative overflow-hidden group row-span-2" id="storage-card">
             <div class="flex justify-between items-center mb-3">
                 <span class="text-sm font-semibold text-slate-400 uppercase tracking-wider">硬盘(平均)</span>
@@ -305,13 +292,10 @@
                 <div class="text-sm text-slate-400 pb-1">°C</div>
             </div>
             <div class="text-sm text-slate-500 mb-3" id="disk-avg-hint">硬盘详情</div>
-
-            <!-- 硬盘详情 -->
             <div class="mt-4 space-y-2 pt-3 border-t border-slate-700/50">
                 <div class="space-y-2" id="storage-list"></div>
             </div>
         </div>
-
         <!-- 内存卡片 -->
         <div class="glass-card p-5 relative overflow-hidden group">
             <div class="flex justify-between items-center mb-3">
@@ -319,17 +303,13 @@
                 <iconify-icon class="text-xl text-emerald-400" icon="mdi:memory"></iconify-icon>
             </div>
             <div class="flex items-center justify-between min-h-[104px]">
-                <!-- 可用信息 -->
                 <div class="flex flex-col mt-6">
-                    <div class="flex items-center gap-1 text-sm text-slate-400 mb-1">
-                        <span>可用</span>
-                    </div>
+                    <div class="flex items-center gap-1 text-sm text-slate-400 mb-1"><span>可用</span></div>
                     <div class="flex items-baseline gap-1">
                         <span class="text-2xl font-mono font-bold text-emerald-400" id="mem-available-text">--</span>
                         <span class="text-sm text-slate-400">GB</span>
                     </div>
                 </div>
-                <!-- SVG 圆环 -->
                 <div class="relative w-20 h-20 flex-shrink-0">
                     <svg class="w-full h-full -rotate-90" viewBox="0 0 36 36">
                         <circle cx="18" cy="18" r="15.5" fill="none" stroke="#1e293b" stroke-width="3"></circle>
@@ -343,7 +323,6 @@
                 </div>
             </div>
         </div>
-
         <!-- GPU 卡片 -->
         <div class="glass-card p-5 relative overflow-hidden group">
             <div class="flex justify-between items-center mb-3">
@@ -351,17 +330,13 @@
                 <iconify-icon class="text-xl text-orange-400" icon="mdi:expansion-card"></iconify-icon>
             </div>
             <div class="flex items-center justify-between min-h-[104px]">
-                <!-- 温度信息 -->
                 <div class="flex flex-col mt-6">
-                    <div class="flex items-center gap-1 text-sm text-slate-400 mb-1">
-                        <span>温度</span>
-                    </div>
+                    <div class="flex items-center gap-1 text-sm text-slate-400 mb-1"><span>温度</span></div>
                     <div class="flex items-baseline gap-1">
                         <span class="text-2xl font-mono font-bold text-orange-400" id="gpu-temp-text">--</span>
                         <span class="text-sm text-slate-400">°C</span>
                     </div>
                 </div>
-                <!-- SVG 圆环 -->
                 <div class="relative w-20 h-20 flex-shrink-0">
                     <svg class="w-full h-full -rotate-90" viewBox="0 0 36 36">
                         <circle cx="18" cy="18" r="15.5" fill="none" stroke="#1e293b" stroke-width="3"></circle>
@@ -377,18 +352,15 @@
         </div>
     </section>
 
-    <!-- 2. 风扇 -->
+    <!-- 风扇管理中心 -->
     <section class="glass-card p-6">
         <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
             <h2 class="text-lg font-bold flex items-center gap-2">
                 <iconify-icon class="text-sky-400" icon="mdi:fan"></iconify-icon>
                 风扇管理中心
             </h2>
-            <button
-                    type="button"
-                    id="btn-scan-fans"
-                    class="px-4 py-2 text-xs rounded-lg bg-sky-600 text-white font-medium hover:bg-sky-500"
-            >
+            <button type="button" id="btn-scan-fans"
+                    class="px-4 py-2 text-xs rounded-lg bg-sky-600 text-white font-medium hover:bg-sky-500">
                 扫描并添加风扇
             </button>
         </div>
@@ -401,10 +373,7 @@
             <iconify-icon class="text-sky-400" icon="mdi:chart-line"></iconify-icon>
             温度历史
         </h2>
-        <div
-                class="w-full h-80 bg-slate-900/40 rounded-2xl border border-slate-700/30"
-                id="history-chart"
-        ></div>
+        <div class="w-full h-80 bg-slate-900/40 rounded-2xl border border-slate-700/30" id="history-chart"></div>
     </section>
 
     <!-- 系统设置 -->
@@ -414,82 +383,28 @@
             系统设置
         </h2>
 
-        <!-- 风扇控制参数（折叠区） -->
+        <!-- 风扇控制参数（折叠区，内容不变） -->
         <div class="mb-4">
             <button type="button" id="fan-params-toggle"
                     class="flex items-center gap-2 text-sm font-bold text-slate-300 hover:text-white transition-colors mb-4">
-                <iconify-icon id="fan-params-chevron" class="text-lg transition-transform rotate-90" icon="mdi:chevron-right"></iconify-icon>
+                <iconify-icon id="fan-params-chevron" class="text-lg transition-transform"
+                              icon="mdi:chevron-right"></iconify-icon>
                 <iconify-icon class="text-sky-400" icon="mdi:tune-vertical"></iconify-icon>
                 风扇控制参数
             </button>
-            <div id="fan-params-panel" class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div id="fan-params-panel" class="grid grid-cols-1 md:grid-cols-2 gap-8 hidden">
+                <!-- 过热阈值、退出行为、退出转速 -->
                 <div class="space-y-4">
-                    <div class="flex justify-between items-center">
-                        <label class="text-sm text-slate-300" for="g-deadzone">
-                            最小调整幅度
-                            <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
-                                  title="目标 PWM 与当前 PWM 的差值小于此值时，不调整输出，防止频繁微调">?</span>
-                        </label>
-                        <div class="flex items-center gap-2">
-                            <input
-                                    id="g-deadzone"
-                                    class="w-16 bg-slate-800 border border-slate-600 rounded-md px-2 py-1 text-sm text-center text-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    type="number"
-                                    min="0"
-                                    max="50"
-                            />
-                        </div>
-                    </div>
-                    <div class="flex justify-between items-center">
-                        <label class="text-sm text-slate-300" for="g-hysteresis">
-                            停转温差 (°C)
-                            <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
-                                  title="温度需低于曲线首点此差值才停转，防止临界温度频繁启停">?</span>
-                        </label>
-                        <div class="flex items-center gap-2">
-                            <input
-                                    id="g-hysteresis"
-                                    class="w-16 bg-slate-800 border border-slate-600 rounded-md px-2 py-1 text-sm text-center text-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    type="number"
-                                    min="0"
-                                    max="10"
-                                    step="0.5"
-                            />
-                        </div>
-                    </div>
-                    <div class="flex justify-between items-center">
-                        <label class="text-sm text-slate-300" for="g-interval">
-                            刷新频率 (秒)
-                            <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
-                                  title="控制器的执行间隔，间隔越短响应越快，但 CPU 占用越高">?</span>
-                        </label>
-                        <div class="flex items-center gap-2">
-                            <input
-                                    id="g-interval"
-                                    class="w-16 bg-slate-800 border border-slate-600 rounded-md px-2 py-1 text-sm text-center text-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    type="number"
-                                    min="1"
-                                    max="10"
-                                    step="1"
-                            />
-                        </div>
-                    </div>
-                </div>
-                <div class="space-y-4">
-                    <div class="flex justify-between items-center">
+                    <div id="g-row-emergency" class="flex justify-between items-center">
                         <label class="text-sm text-slate-300" for="g-emergency">
                             过热阈值 (°C)
                             <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
-                                  title="超过此温度时，风扇强制全速运转 (PWM=255)">?</span>
+                                  title="当存在未单独设置该项的风扇时在此编辑；若所有风扇均已单独设置，则隐藏本行。">?</span>
                         </label>
                         <div class="flex items-center gap-2">
-                            <input
-                                    id="g-emergency"
-                                    class="w-16 bg-slate-800 border border-slate-600 rounded-md px-2 py-1 text-sm text-center text-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    type="number"
-                                    min="60"
-                                    max="100"
-                            />
+                            <input id="g-emergency"
+                                   class="w-16 bg-slate-800 border border-slate-600 rounded-md px-2 py-1 text-sm text-center text-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                   type="number" min="60" max="100"/>
                         </div>
                     </div>
                     <div class="flex justify-between items-center">
@@ -498,10 +413,8 @@
                             <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
                                   title="程序退出时风扇的停止方式">?</span>
                         </label>
-                        <select
-                                id="g-stop-beh"
-                                class="w-24 bg-slate-800 border border-slate-600 rounded-md px-2 py-1 text-sm text-center text-slate-200 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                        >
+                        <select id="g-stop-beh"
+                                class="w-24 bg-slate-800 border border-slate-600 rounded-md px-2 py-1 text-sm text-center text-slate-200 focus:outline-none focus:ring-1 focus:ring-sky-500">
                             <option value="keep">保持当前</option>
                             <option value="set">指定 PWM</option>
                         </select>
@@ -512,15 +425,48 @@
                             <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
                                   title="程序退出时设置的风扇 PWM 值">?</span>
                         </label>
+                        <input id="g-stop-pwm"
+                               class="w-24 bg-slate-800 border border-slate-600 rounded-md px-2 py-1 text-sm text-center text-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                               type="number" min="0" max="255"/>
+                    </div>
+                </div>
+
+                <!-- 最小调整幅度、停转温差、刷新频率 -->
+                <div class="space-y-4">
+                    <div id="g-row-deadzone" class="flex justify-between items-center">
+                        <label class="text-sm text-slate-300" for="g-deadzone">
+                            最小调整幅度
+                            <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
+                                  title="当存在未单独设置该项的风扇时在此编辑；若所有风扇均在「风扇设置」中填写了此项，则隐藏本行并以各风扇为准。">?</span>
+                        </label>
                         <div class="flex items-center gap-2">
-                            <input
-                                    id="g-stop-pwm"
-                                    class="w-16 bg-slate-800 border border-slate-600 rounded-md px-2 py-1 text-sm text-center text-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    type="number"
-                                    min="0"
-                                    max="255"
-                            />
-                            <span class="text-xs text-slate-500">0–255</span>
+                            <input id="g-deadzone"
+                                   class="w-16 bg-slate-800 border border-slate-600 rounded-md px-2 py-1 text-sm text-center text-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                   type="number" min="0" max="50"/>
+                        </div>
+                    </div>
+                    <div id="g-row-hysteresis" class="flex justify-between items-center">
+                        <label class="text-sm text-slate-300" for="g-hysteresis">
+                            停转温差 (°C)
+                            <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
+                                  title="当存在未单独设置该项的风扇时在此编辑；若所有风扇均已单独设置，则隐藏本行。">?</span>
+                        </label>
+                        <div class="flex items-center gap-2">
+                            <input id="g-hysteresis"
+                                   class="w-16 bg-slate-800 border border-slate-600 rounded-md px-2 py-1 text-sm text-center text-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                   type="number" min="0" max="10" step="0.5"/>
+                        </div>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <label class="text-sm text-slate-300" for="g-interval">
+                            刷新频率 (秒)
+                            <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
+                                  title="控制器的执行间隔，间隔越短响应越快，但 CPU 占用越高">?</span>
+                        </label>
+                        <div class="flex items-center gap-2">
+                            <input id="g-interval"
+                                   class="w-16 bg-slate-800 border border-slate-600 rounded-md px-2 py-1 text-sm text-center text-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                   type="number" min="1" max="10" step="1"/>
                         </div>
                     </div>
                 </div>
@@ -531,14 +477,14 @@
         <div class="pt-4 border-t border-slate-700/50">
             <button type="button" id="sensor-mgr-toggle"
                     class="flex items-center gap-2 text-sm font-bold text-slate-300 hover:text-white transition-colors mb-4">
-                <iconify-icon id="sensor-mgr-chevron" class="text-lg transition-transform" icon="mdi:chevron-right"></iconify-icon>
+                <iconify-icon id="sensor-mgr-chevron" class="text-lg transition-transform"
+                              icon="mdi:chevron-right"></iconify-icon>
                 <iconify-icon class="text-sky-400" icon="mdi:thermometer-lines"></iconify-icon>
                 传感器管理
             </button>
             <div id="sensor-mgr-panel" class="hidden">
                 <p class="text-xs text-slate-500 mb-3">
-                    可以给传感器起别名（在温度源下拉中显示），或隐藏不需要的通道。修改后需点击底部「应用并保存更改」生效。
-                </p>
+                    可以给传感器起别名（在温度源下拉中显示），或隐藏不需要的通道。修改后需点击底部「应用并保存更改」生效。</p>
                 <div class="overflow-x-auto max-h-80 overflow-y-auto border border-slate-700 rounded-lg">
                     <table class="w-full text-xs text-left">
                         <thead class="bg-slate-800/80 sticky top-0 z-10">
@@ -556,27 +502,15 @@
             </div>
         </div>
 
-        <div
-                class="mt-10 pt-6 border-t border-slate-700/50 flex flex-col md:flex-row justify-between items-center gap-4"
-        >
-            <div class="text-[10px] text-slate-500 flex items-center gap-4">
-            <span class="flex items-center gap-1"
-            ><iconify-icon class="text-green-500" icon="mdi:check-circle"></iconify-icon> FanControlServer</span
-            >
-            </div>
+        <div class="mt-10 pt-6 border-t border-slate-700/50 flex flex-col md:flex-row justify-between items-center gap-4">
+            <div class="text-[10px] text-slate-500 flex items-center gap-4"><span class="flex items-center gap-1"><iconify-icon
+                    class="text-green-500" icon="mdi:check-circle"></iconify-icon> FanControlServer</span></div>
             <div class="flex gap-4">
-                <button
-                        type="button"
-                        id="btn-global-discard"
-                        class="px-6 py-2.5 text-sm font-bold text-slate-400 hover:text-white transition-colors"
-                >
-                    放弃修改
+                <button type="button" id="btn-global-discard"
+                        class="px-6 py-2.5 text-sm font-bold text-slate-400 hover:text-white transition-colors">放弃修改
                 </button>
-                <button
-                        type="button"
-                        id="btn-global-save"
-                        class="px-8 py-2.5 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white text-sm font-bold rounded-xl shadow-lg shadow-sky-500/20 transform active:scale-95 transition-all flex items-center gap-2"
-                >
+                <button type="button" id="btn-global-save"
+                        class="px-8 py-2.5 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white text-sm font-bold rounded-xl shadow-lg shadow-sky-500/20 transform active:scale-95 transition-all flex items-center gap-2">
                     <iconify-icon class="text-lg" icon="mdi:content-save-check"></iconify-icon>
                     应用并保存更改
                 </button>
@@ -586,10 +520,8 @@
 </div>
 
 <!-- 扫描风扇 -->
-<dialog
-        id="scan-fans-dialog"
-        class="rounded-2xl bg-slate-900 text-slate-100 border border-slate-600 p-0 backdrop:bg-black/60 max-w-3xl w-[92vw]"
->
+<dialog id="scan-fans-dialog"
+        class="rounded-2xl bg-slate-900 text-slate-100 border border-slate-600 p-0 backdrop:bg-black/60 max-w-3xl w-[92vw]">
     <div class="p-6 max-h-[85vh] overflow-y-auto">
         <h3 class="text-lg font-bold mb-2">从硬件扫描风扇</h3>
         <p class="text-xs text-slate-500 mb-4">后端扫描 /sys/class/hwmon，列出 PWM 与转速文件路径，勾选后添加到配置。</p>
@@ -617,166 +549,218 @@
     </div>
 </dialog>
 
-<!-- 风扇设置（齿轮）：名称、路径、调速曲线 -->
-<dialog
-        id="fan-edit-dialog"
-        class="rounded-2xl bg-slate-900 text-slate-100 border border-slate-600 p-0 backdrop:bg-black/60 max-w-4xl w-[94vw]"
->
-    <div class="p-6 max-h-[90vh] overflow-y-auto">
-        <div class="flex items-start justify-between gap-4 mb-4">
+<!-- 风扇设置弹窗：头部固定，滚动区独立，无背景滚动锁定 -->
+<dialog id="fan-edit-dialog"
+        class="rounded-2xl bg-slate-900 text-slate-100 border border-slate-600 p-0 backdrop:bg-black/60 max-w-4xl w-[94vw]">
+    <div class="flex flex-col max-h-[90vh]">
+        <!-- 固定头部 -->
+        <div id="fe-dialog-header"
+             class="flex-shrink-0 z-30 flex items-start justify-between gap-4 px-6 pt-6 pb-3 border-b border-slate-700/80 bg-slate-900">
             <div class="min-w-0">
                 <h3 class="text-lg font-bold" id="fan-edit-title">风扇设置</h3>
                 <p class="text-xs text-slate-500 mt-1">
-                    以下为当前风扇的配置项，修改后请点击底部「保存设置与曲线」写入服务端。
-                </p>
+                    以下为当前风扇的配置项，修改后请点击底部「保存设置与曲线」写入服务端。</p>
             </div>
-            <button
-                    type="button"
-                    id="fe-close"
-                    class="flex-shrink-0 rounded-lg p-2 text-slate-400 hover:text-white hover:bg-slate-700/80 transition-colors"
-                    title="关闭"
-                    aria-label="关闭"
-            >
+            <button type="button" id="fe-close"
+                    class="flex-shrink-0 rounded-lg p-2 text-slate-400 hover:text-white hover:bg-slate-700/80 transition-colors">
                 <iconify-icon class="text-2xl" icon="mdi:close"></iconify-icon>
             </button>
         </div>
-        <div class="flex flex-col gap-4 text-sm max-w-3xl">
-            <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-                <label for="fe-name"
-                       class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">
-                    显示名称
-                    <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
-                          title="卡片与列表上的名称">?</span>
-                </label>
-                <input type="text" id="fe-name"
-                       class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2"
-                       placeholder="例如 CPU 风扇"/>
-            </div>
-            <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-                <label for="fe-pwm" class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">
-                    PWM 写入路径
-                    <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
-                          title="sysfs 中 pwm 数值文件，例如 /sys/class/hwmon/hwmonX/pwm1">?</span>
-                </label>
-                <input type="text" id="fe-pwm"
-                       class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2 font-mono text-[11px]"
-                       placeholder="/sys/class/hwmon/.../pwm1"/>
-            </div>
-            <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-                <label for="fe-rpm" class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">
-                    转速读取路径
-                    <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
-                          title="fan*_input 文件路径，无则留空">?</span>
-                </label>
-                <input type="text" id="fe-rpm"
-                       class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2 font-mono text-[11px]"
-                       placeholder="/sys/class/hwmon/.../fan1_input"/>
-            </div>
-            <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-                <label for="fe-en" class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">
-                    PWM 使能路径
-                    <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
-                          title="pwm*_enable 文件路径，可选；写入 PWM 前会先把它置为 1">?</span>
-                </label>
-                <input type="text" id="fe-en"
-                       class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2 font-mono text-[11px]"
-                       placeholder="无则留空"/>
-            </div>
-            <div
-                    id="fe-source-row"
-                    class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4"
-            >
-                <label for="fe-source" class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">
-                    温度数据源
-                    <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
-                          title="仅自动模式生效；调速依据哪一路温度">?</span>
-                </label>
-                <div id="fe-source-wrapper" class="relative flex-1 min-w-0">
-                    <button type="button" id="fe-source-btn"
-                            class="w-full flex items-center justify-between bg-slate-800 border border-slate-600 rounded px-3 py-2 text-left hover:border-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500">
-                        <span id="fe-source-display" class="truncate text-slate-200 text-sm">--</span>
-                        <iconify-icon class="text-slate-400 ml-2 flex-shrink-0 transition-transform"
-                                      id="fe-source-chevron" icon="mdi:chevron-down"></iconify-icon>
-                    </button>
-                    <div id="fe-source-menu"
-                         class="hidden absolute top-full left-0 right-0 mt-1 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl shadow-black/40 max-h-72 overflow-y-auto"></div>
-                    <input type="hidden" id="fe-source"/>
+
+        <!-- 滚动内容区 -->
+        <div class="flex-1 min-h-0 overflow-y-auto px-6 py-4">
+            <div class="flex flex-col gap-4 text-sm max-w-3xl">
+                <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                    <label for="fe-name" class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">显示名称<span
+                            class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
+                            title="卡片与列表上的名称">?</span></label>
+                    <input type="text" id="fe-name"
+                           class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2"
+                           placeholder="例如 CPU 风扇"/>
                 </div>
-                <div id="fe-source-mode"
-                     class="flex items-center p-0.5 bg-slate-800 rounded-lg flex-shrink-0"
-                     title="切换温度源下拉的显示范围">
-                    <button type="button" data-source-mode="simple"
-                            class="px-3 py-1 text-xs rounded-md transition-colors"
-                            title="只显示常用聚合源（CPU / GPU / 硬盘 / 最大值）">
-                        简洁
-                    </button>
-                    <button type="button" data-source-mode="advanced"
-                            class="px-3 py-1 text-xs rounded-md transition-colors"
-                            title="显示所有 hwmon 通道 + 自定义组合">
-                        高级
-                    </button>
+                <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                    <label for="fe-pwm" class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">PWM
+                        写入路径<span
+                                class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
+                                title="sysfs 中 pwm 数值文件，例如 /sys/class/hwmon/hwmonX/pwm1">?</span></label>
+                    <input type="text" id="fe-pwm"
+                           class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2 font-mono text-[11px]"
+                           placeholder="/sys/class/hwmon/.../pwm1"/>
+                </div>
+                <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                    <label for="fe-rpm"
+                           class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">转速读取路径<span
+                            class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
+                            title="fan*_input 文件路径，无则留空">?</span></label>
+                    <input type="text" id="fe-rpm"
+                           class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2 font-mono text-[11px]"
+                           placeholder="/sys/class/hwmon/.../fan1_input"/>
+                </div>
+                <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                    <label for="fe-en" class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">PWM
+                        使能路径<span
+                                class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
+                                title="pwm*_enable 文件路径，可选；写入 PWM 前会先把它置为 1">?</span></label>
+                    <input type="text" id="fe-en"
+                           class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2 font-mono text-[11px]"
+                           placeholder="无则留空"/>
+                </div>
+                <div id="fe-source-row" class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                    <label for="fe-source"
+                           class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">温度数据源<span
+                            class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
+                            title="仅自动模式生效；调速依据哪一路温度">?</span></label>
+                    <div id="fe-source-wrapper" class="relative flex-1 min-w-0">
+                        <button type="button" id="fe-source-btn"
+                                class="w-full flex items-center justify-between bg-slate-800 border border-slate-600 rounded px-3 py-2 text-left hover:border-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500">
+                            <span id="fe-source-display" class="truncate text-slate-200 text-sm">--</span>
+                            <iconify-icon class="text-slate-400 ml-2 flex-shrink-0 transition-transform"
+                                          id="fe-source-chevron" icon="mdi:chevron-down"></iconify-icon>
+                        </button>
+                        <div id="fe-source-menu"
+                             class="hidden absolute top-full left-0 right-0 mt-1 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl shadow-black/40 max-h-72 overflow-y-auto"></div>
+                        <input type="hidden" id="fe-source"/>
+                    </div>
+                    <div id="fe-source-mode" class="flex items-center p-0.5 bg-slate-800 rounded-lg flex-shrink-0"
+                         title="切换温度源下拉的显示范围">
+                        <button type="button" data-source-mode="simple"
+                                class="px-3 py-1 text-xs rounded-md transition-colors">简洁
+                        </button>
+                        <button type="button" data-source-mode="advanced"
+                                class="px-3 py-1 text-xs rounded-md transition-colors">高级
+                        </button>
+                    </div>
+                </div>
+                <p id="fe-source-warn" class="hidden text-[11px] text-amber-400 mt-1 flex items-center gap-1">
+                    <iconify-icon icon="mdi:alert-circle-outline" class="text-xs"></iconify-icon>
+                    SATA 硬盘休眠等导致主温度源无读数时，将按「降级与调速参数」中的策略控制本风扇 PWM
+                </p>
+
+                <div class="mt-4 rounded-lg border border-slate-700/50 bg-slate-800/30 p-4 space-y-4">
+                    <h4 class="text-sm font-bold flex items-center gap-2 text-slate-200">
+                        <iconify-icon class="text-sky-400" icon="mdi:shield-half-full"></iconify-icon>
+                        降级与调速参数
+                    </h4>
+                    <!-- 删除原提示文字，此处为空 -->
+                    <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                        <label for="fe-fallback-policy"
+                               class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">
+                            温度源失效策略
+                            <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
+                                  title="仅自动模式：当主温度源不可用（如 SATA 休眠、组合源全空）时如何设定 PWM。保持当前=不写硬件；其余为固定目标或按后备源走曲线。">?</span>
+                        </label>
+                        <select id="fe-fallback-policy"
+                                class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2 text-slate-200 text-sm focus:outline-none focus:ring-1 focus:ring-sky-500">
+                            <option value="keep_last">保持当前转速（默认）</option>
+                            <option value="stop">停转（PWM=0）</option>
+                            <option value="min_pwm">最低安全转速（固定 PWM）</option>
+                            <option value="full_speed">全速（PWM=255）</option>
+                            <option value="follow_other">跟随其他温度源（走本风扇曲线）</option>
+                        </select>
+                    </div>
+                    <div id="fe-fallback-min-row"
+                         class="hidden flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                        <label for="fe-fallback-min-pwm"
+                               class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">
+                            最低安全 PWM
+                            <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
+                                  title="策略为「最低安全转速」时生效，范围 1–255；保存时若为 0 会规范为 80。">?</span>
+                        </label>
+                        <input type="number" id="fe-fallback-min-pwm" min="1" max="255" value="80"
+                               class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2"/>
+                    </div>
+                    <div id="fe-fallback-follow-row"
+                         class="hidden flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-4">
+                        <label class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug pt-2">
+                            后备温度源
+                            <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
+                                  title="与主温度源下拉相同选项；简洁/高级切换仍使用上方「简洁|高级」按钮。">?</span>
+                        </label>
+                        <div id="fe-fb-source-wrapper" class="relative flex-1 min-w-0">
+                            <button type="button" id="fe-fb-source-btn"
+                                    class="w-full flex items-center justify-between bg-slate-800 border border-slate-600 rounded px-3 py-2 text-left hover:border-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500">
+                                <span id="fe-fb-source-display" class="truncate text-slate-200 text-sm">--</span>
+                                <iconify-icon class="text-slate-400 ml-2 flex-shrink-0 transition-transform"
+                                              id="fe-fb-source-chevron" icon="mdi:chevron-down"></iconify-icon>
+                            </button>
+                            <div id="fe-fb-source-menu"
+                                 class="hidden absolute top-full left-0 right-0 mt-1 z-[60] bg-slate-800 border border-slate-600 rounded-lg shadow-xl shadow-black/40 max-h-72 overflow-y-auto"></div>
+                            <input type="hidden" id="fe-fb-source"/>
+                        </div>
+                    </div>
+                    <div class="border-t border-slate-700/50 pt-3 space-y-3">
+                        <!-- 死区 / 滞回 / 过热阈值输入框保持不变 -->
+                        <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                            <label for="fe-deadzone" class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">最小调整幅度<span
+                                    class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
+                                    title="留空则使用风扇默认值 5。填写则仅本风扇使用（0–255）。">?</span></label>
+                            <input type="number" id="fe-deadzone" min="0" max="255" step="1" placeholder="留空=默认5"
+                                   class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2 placeholder-slate-600"/>
+                        </div>
+                        <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                            <label for="fe-hysteresis"
+                                   class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">停转温差 (°C)<span
+                                    class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
+                                    title="留空则使用风扇默认值 5°C。">?</span></label>
+                            <input type="number" id="fe-hysteresis" min="0" max="30" step="0.5" placeholder="留空=默认5"
+                                   class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2 placeholder-slate-600"/>
+                        </div>
+                        <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                            <label for="fe-emergency" class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">过热阈值
+                                (°C)<span
+                                        class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
+                                        title="留空则使用风扇默认值 80°C。">?</span></label>
+                            <input type="number" id="fe-emergency" min="1" max="120" step="1" placeholder="留空=默认80"
+                                   class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2 placeholder-slate-600"/>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <p id="fe-source-warn"
-               class="hidden text-[11px] text-amber-400 mt-1 flex items-center gap-1">
-                <iconify-icon icon="mdi:alert-circle-outline" class="text-xs"></iconify-icon>
-                SATA 硬盘休眠时将保持当前风扇转速
-            </p>
+
+            <div class="mt-8 pt-6 border-t border-slate-700">
+                <h4 class="text-sm font-bold mb-2 flex items-center gap-2">
+                    <iconify-icon class="text-sky-400" icon="mdi:vector-curve"></iconify-icon>
+                    调速曲线（本风扇）
+                </h4>
+                <p class="text-xs text-slate-500 mb-3">双击空白处 <span class="text-sky-400 font-bold">添加点</span> ·
+                    右键点位
+                    <span class="text-red-400 font-bold">删除点</span> · 拖拽调整</p>
+                <div class="w-full h-[360px] bg-slate-900/40 rounded-2xl border border-slate-700/30"
+                     id="fan-curve-editor"></div>
+            </div>
         </div>
 
-        <div class="mt-8 pt-6 border-t border-slate-700">
-            <h4 class="text-sm font-bold mb-2 flex items-center gap-2">
-                <iconify-icon class="text-sky-400" icon="mdi:vector-curve"></iconify-icon>
-                调速曲线（本风扇）
-            </h4>
-            <p class="text-xs text-slate-500 mb-3">
-                双击空白处 <span class="text-sky-400 font-bold">添加点</span> · 右键点位
-                <span class="text-red-400 font-bold">删除点</span> · 拖拽调整
-            </p>
-            <div
-                    class="w-full h-[360px] bg-slate-900/40 rounded-2xl border border-slate-700/30"
-                    id="fan-curve-editor"
-            ></div>
-        </div>
-
-        <div class="flex flex-wrap justify-end gap-2 mt-6">
+        <!-- 底部按钮（固定） -->
+        <div id="fe-dialog-footer"
+             class="flex-shrink-0 z-30 flex flex-wrap justify-end gap-2 px-6 py-3 border-t border-slate-700/80 bg-slate-900">
             <button type="button" id="fe-cancel" class="px-4 py-2 rounded-lg bg-slate-700 text-sm">取消</button>
             <button type="button" id="fe-delete" class="px-4 py-2 rounded-lg bg-red-900/50 text-red-200 text-sm hidden">
                 移除此项
             </button>
-            <button type="button" id="fe-save" class="px-4 py-2 rounded-lg bg-sky-600 text-sm text-white">
-                保存设置与曲线
+            <button type="button" id="fe-save" class="px-4 py-2 rounded-lg bg-sky-600 text-sm text-white">保存设置与曲线
             </button>
         </div>
     </div>
 </dialog>
 
 <!-- API Key 设置弹窗 -->
-<dialog
-        id="auth-dialog"
-        class="rounded-2xl bg-slate-900 text-slate-100 border border-slate-600 p-0 backdrop:bg-black/60 max-w-md w-[92vw]"
->
+<dialog id="auth-dialog"
+        class="rounded-2xl bg-slate-900 text-slate-100 border border-slate-600 p-0 backdrop:bg-black/60 max-w-md w-[92vw]">
     <div class="p-6">
         <div class="flex items-center gap-3 mb-4">
             <div class="p-2 bg-sky-500/10 rounded-xl border border-sky-500/20">
                 <iconify-icon class="text-2xl text-sky-400" icon="mdi:key-variant"></iconify-icon>
             </div>
-            <div>
-                <h3 class="text-lg font-bold" id="auth-dialog-title">API Key 设置</h3>
-                <p class="text-xs text-slate-500" id="auth-dialog-desc">首次使用，请确认或修改 API Key</p>
-            </div>
+            <div><h3 class="text-lg font-bold" id="auth-dialog-title">API Key 设置</h3>
+                <p class="text-xs text-slate-500" id="auth-dialog-desc">首次使用，请确认或修改 API Key</p></div>
         </div>
         <div class="space-y-3">
-            <div>
-                <label for="auth-key-input" class="text-sm text-slate-400 block mb-1">API Key</label>
-                <input
-                        type="text"
-                        id="auth-key-input"
-                        class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 font-mono text-sm text-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                        placeholder="请输入 API Key"
-                        spellcheck="false"
-                        autocomplete="off"
-                />
+            <div><label for="auth-key-input" class="text-sm text-slate-400 block mb-1">API Key</label><input type="text"
+                                                                                                             id="auth-key-input"
+                                                                                                             class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 font-mono text-sm text-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                                                                                             placeholder="请输入 API Key"
+                                                                                                             spellcheck="false"
+                                                                                                             autocomplete="off"/>
             </div>
             <p id="auth-error" class="text-xs text-red-400 hidden"></p>
         </div>
