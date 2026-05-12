@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/sirupsen/logrus"
@@ -106,8 +107,14 @@ func defaultConfig() model.Config {
 	}
 }
 
-// migrateConfig 按版本号逐级迁移旧配置，返回 true 表示发生了迁移。
+// migrateConfig 按版本号逐级迁移旧配置，返回 true 表示发生了迁移（或需落盘修正）。
 func migrateConfig(cfg *model.Config) bool {
+	if cfg.Version > model.CurrentConfigVersion {
+		logrus.Warnf("[配置] 文件 version=%d 高于当前程序 v%d，已写回 version=%d",
+			cfg.Version, model.CurrentConfigVersion, model.CurrentConfigVersion)
+		cfg.Version = model.CurrentConfigVersion
+		return true
+	}
 	if cfg.Version >= model.CurrentConfigVersion {
 		return false
 	}
@@ -116,8 +123,9 @@ func migrateConfig(cfg *model.Config) bool {
 	if cfg.Version < 1 {
 		migrateV0ToV1(cfg)
 	}
-	// 未来版本示例：
-	// if cfg.Version < 2 { migrateV1ToV2(cfg) }
+	if cfg.Version < 2 {
+		migrateV1ToV2(cfg)
+	}
 
 	cfg.Version = model.CurrentConfigVersion
 	logrus.Infof("[配置] 配置迁移完成 → v%d", model.CurrentConfigVersion)
@@ -132,12 +140,76 @@ func migrateV0ToV1(cfg *model.Config) {
 	}
 }
 
-func normalizeConfig(cfg *model.Config) {
-	if cfg.Global.UpdateIntervalMS <= 0 {
-		cfg.Global.UpdateIntervalMS = 1500
+// migrateV1ToV2 v1→v2：显式写入降级策略默认（keep_last）、修正不完整项；并将当时全局的
+// 死区/停转温差/过热阈值复制到尚未自定义的风扇（与迁移时全局值一致）。
+func migrateV1ToV2(cfg *model.Config) {
+	for i := range cfg.Fans {
+		f := &cfg.Fans[i]
+		p := strings.TrimSpace(f.FallbackPolicy)
+		switch p {
+		case model.FallbackStop, model.FallbackMinPWM, model.FallbackFullSpeed, model.FallbackFollowOther, model.FallbackKeepLast:
+			if p == model.FallbackFollowOther && strings.TrimSpace(f.FallbackFollowSource) == "" {
+				f.FallbackPolicy = model.FallbackKeepLast
+				f.FallbackFollowSource = ""
+			}
+			if p == model.FallbackMinPWM && f.FallbackMinPWM <= 0 {
+				f.FallbackMinPWM = 80
+			}
+		case "":
+			f.FallbackPolicy = model.FallbackKeepLast
+		default:
+			f.FallbackPolicy = model.FallbackKeepLast
+			f.FallbackFollowSource = ""
+		}
 	}
-	if cfg.Global.EmergencyTemp <= 0 {
+
+	g := cfg.Global
+	dz := g.PWMDeadzone
+	if dz < 0 || dz > 255 {
+		dz = 5
+	}
+	hys := g.StopHysteresis
+	if hys < 0 || hys > 30 {
+		hys = 2
+	}
+	em := g.EmergencyTemp
+	if em <= 0 || em > 120 {
+		em = 80
+	}
+	for i := range cfg.Fans {
+		f := &cfg.Fans[i]
+		if f.PWMDeadzone == nil {
+			v := dz
+			f.PWMDeadzone = &v
+		}
+		if f.StopHysteresis == nil {
+			h := hys
+			f.StopHysteresis = &h
+		}
+		if f.EmergencyTemp == nil {
+			e := em
+			f.EmergencyTemp = &e
+		}
+	}
+	logrus.Infof("[配置] v2：降级策略默认已写入；全局调速三项已复制到尚未自定义的风扇")
+}
+
+func normalizeConfig(cfg *model.Config) {
+	// 全局配置字段合法性校验与默认值填充
+	if cfg.Global.PWMDeadzone < 0 || cfg.Global.PWMDeadzone > 255 {
+		cfg.Global.PWMDeadzone = 5
+	}
+	if cfg.Global.StopHysteresis < 0 || cfg.Global.StopHysteresis > 30 {
+		cfg.Global.StopHysteresis = 2
+	}
+	if cfg.Global.EmergencyTemp <= 0 || cfg.Global.EmergencyTemp > 120 {
 		cfg.Global.EmergencyTemp = 80
+	}
+	if cfg.Global.StopPWM < 0 || cfg.Global.StopPWM > 255 {
+		cfg.Global.StopPWM = 200
+	}
+	if cfg.Global.UpdateIntervalMS < 100 || cfg.Global.UpdateIntervalMS > 10000 {
+		cfg.Global.UpdateIntervalMS = 2000
 	}
 	if cfg.Global.StopBehavior == "" {
 		cfg.Global.StopBehavior = model.StopBehaviorSet
@@ -152,7 +224,10 @@ func normalizeConfig(cfg *model.Config) {
 		cfg.Global.SensorHidden = []string{}
 	}
 
+	// 风扇列表排序：按ID稳定排序
 	sort.Slice(cfg.Fans, func(i, j int) bool { return cfg.Fans[i].ID < cfg.Fans[j].ID })
+
+	// 每个风扇的独立规范化
 	for i := range cfg.Fans {
 		if cfg.Fans[i].Mode == "" {
 			cfg.Fans[i].Mode = model.FanModeCurve
@@ -160,8 +235,54 @@ func normalizeConfig(cfg *model.Config) {
 		if cfg.Fans[i].Source == "" {
 			cfg.Fans[i].Source = "cpu"
 		}
+		// 曲线点排序
 		sort.Slice(cfg.Fans[i].Curve, func(a, b int) bool {
 			return cfg.Fans[i].Curve[a].Temp < cfg.Fans[i].Curve[b].Temp
 		})
+		normalizeFanOverrides(&cfg.Fans[i])
+	}
+}
+
+// normalizeFanOverrides 校验每风扇可选的全局项覆盖，非法则丢弃覆盖（回退全局）。
+func normalizeFanOverrides(f *model.FanConfig) {
+	if f.PWMDeadzone != nil {
+		v := *f.PWMDeadzone
+		if v < 0 || v > 255 {
+			f.PWMDeadzone = nil
+		}
+	}
+	if f.StopHysteresis != nil {
+		v := *f.StopHysteresis
+		if v < 0 || v > 30 {
+			f.StopHysteresis = nil
+		}
+	}
+	if f.EmergencyTemp != nil {
+		v := *f.EmergencyTemp
+		if v <= 0 || v > 120 {
+			f.EmergencyTemp = nil
+		}
+	}
+
+	p := strings.TrimSpace(f.FallbackPolicy)
+	switch p {
+	case model.FallbackStop, model.FallbackMinPWM, model.FallbackFullSpeed, model.FallbackFollowOther, model.FallbackKeepLast:
+		f.FallbackPolicy = p
+	case "":
+		f.FallbackPolicy = ""
+	default:
+		f.FallbackPolicy = ""
+	}
+	if f.FallbackPolicy == model.FallbackFollowOther && strings.TrimSpace(f.FallbackFollowSource) == "" {
+		f.FallbackPolicy = ""
+		f.FallbackFollowSource = ""
+	}
+	if f.FallbackPolicy == model.FallbackMinPWM {
+		if f.FallbackMinPWM <= 0 {
+			f.FallbackMinPWM = 80
+		}
+		if f.FallbackMinPWM > 255 {
+			f.FallbackMinPWM = 255
+		}
 	}
 }

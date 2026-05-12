@@ -154,15 +154,15 @@ func (c *Controller) collectAndApply(cfg model.Config) model.Telemetry {
 	sensors := c.readSensors()
 	fans := make([]model.FanRuntime, 0, len(cfg.Fans))
 	for _, fan := range cfg.Fans {
-		target, controlTemp := c.calculateTargetPWM(fan, cfg.Global, cpuTemp, gpuTemp, disks, sensors)
+		target, _ := c.calculateTargetPWM(fan, cfg.Global, cpuTemp, gpuTemp, disks, sensors)
 		var applied int
 		if target < 0 {
-			// 温度源不可用（如硬盘休眠），保持上次 PWM 不动
+			// 温度源不可用且策略为 keep_last：保持上次 PWM 不动
 			if v, ok := c.lastPWM[fan.ID]; ok {
 				applied = v
 			}
 		} else {
-			applied = c.applyPWM(fan, cfg.Global, target)
+			applied = c.applyPWM(fan, target, effectivePWMDeadzone(fan, cfg.Global))
 		}
 		rpm := 0
 		if fan.RPMPath != "" {
@@ -183,7 +183,6 @@ func (c *Controller) collectAndApply(cfg model.Config) model.Telemetry {
 		})
 		//  前端尚未展示风扇历史图表，暂时禁用采集以减少开销
 		// c.pushFanHistory(fan.ID, now, rpm, applied)
-		_ = controlTemp
 	}
 
 	return model.Telemetry{
@@ -262,21 +261,75 @@ func (c *Controller) calculateTargetPWM(
 
 	temp := c.resolveSourceTemp(fan.Source, cpuTemp, gpuTemp, disks, sensors)
 	if temp == nil {
-		logrus.Warnf("[控制器] 风扇 %s 无法获取温度(源=%s)，保持当前转速", fan.Name, fan.Source)
-		return -1, nil
+		return c.targetWhenSourceUnavailable(fan, global, cpuTemp, gpuTemp, disks, sensors)
 	}
-	if *temp >= global.EmergencyTemp {
-		logrus.Warnf("[控制器] 风扇 %s 温度%.1f°C ≥ 紧急温度%.1f°C，全速!", fan.Name, *temp, global.EmergencyTemp)
+	return c.curvePWMFromResolvedTemp(fan, global, temp)
+}
+
+func effectiveFallbackPolicy(fan model.FanConfig) string {
+	switch strings.TrimSpace(fan.FallbackPolicy) {
+	case model.FallbackStop, model.FallbackMinPWM, model.FallbackFullSpeed, model.FallbackFollowOther:
+		return strings.TrimSpace(fan.FallbackPolicy)
+	default:
+		return model.FallbackKeepLast
+	}
+}
+
+// curvePWMFromResolvedTemp 在已有有效温度读数时，按紧急阈值、曲线与滞回计算 PWM。
+func (c *Controller) curvePWMFromResolvedTemp(
+	fan model.FanConfig, global model.GlobalConfig, temp *float64,
+) (int, *float64) {
+	emergency := effectiveEmergencyTemp(fan, global)
+	if *temp >= emergency {
+		logrus.Warnf("[控制器] 风扇 %s 温度%.1f°C ≥ 紧急温度%.1f°C，全速!", fan.Name, *temp, emergency)
 		return 255, temp
 	}
-
-	// 计算曲线基础 PWM 值
 	basePWM := interpolateCurve(fan.Curve, *temp)
-
-	// 滞回逻辑：防止温度临界点时频繁启停
-	pwm := c.applyStopHysteresis(fan.ID, fan.Curve, *temp, basePWM, global.StopHysteresis)
+	hys := effectiveStopHysteresis(fan, global)
+	pwm := c.applyStopHysteresis(fan.ID, fan.Curve, *temp, basePWM, hys)
 	logrus.Debugf("[控制器] 风扇 %s | 温度=%.1f°C | 曲线PWM=%d | 最终PWM=%d", fan.Name, *temp, basePWM, pwm)
 	return clampPWM(pwm), temp
+}
+
+func (c *Controller) targetWhenSourceUnavailable(
+	fan model.FanConfig, global model.GlobalConfig,
+	cpuTemp, gpuTemp *float64, disks model.DiskPayload, sensors []model.SensorReading,
+) (int, *float64) {
+	policy := effectiveFallbackPolicy(fan)
+	logrus.Debugf("[控制器] 风扇 %s 主温度源不可用(源=%s)，降级策略=%s", fan.Name, fan.Source, policy)
+
+	switch policy {
+	case model.FallbackKeepLast:
+		return -1, nil
+	case model.FallbackStop:
+		logrus.Debugf("[控制器] 风扇 %s 降级=停转 PWM=0", fan.Name)
+		return 0, nil
+	case model.FallbackMinPWM:
+		v := clampPWM(fan.FallbackMinPWM)
+		if v <= 0 {
+			v = 80
+		}
+		logrus.Debugf("[控制器] 风扇 %s 降级=最低安全 PWM=%d", fan.Name, v)
+		return v, nil
+	case model.FallbackFullSpeed:
+		logrus.Debugf("[控制器] 风扇 %s 降级=全速", fan.Name)
+		return 255, nil
+	case model.FallbackFollowOther:
+		src := strings.TrimSpace(fan.FallbackFollowSource)
+		if src == "" || src == fan.Source {
+			logrus.Debugf("[控制器] 风扇 %s follow_other 后备源无效，保持上次 PWM", fan.Name)
+			return -1, nil
+		}
+		t2 := c.resolveSourceTemp(src, cpuTemp, gpuTemp, disks, sensors)
+		if t2 == nil {
+			logrus.Debugf("[控制器] 风扇 %s follow_other 后备源仍无温度，保持上次 PWM", fan.Name)
+			return -1, nil
+		}
+		logrus.Debugf("[控制器] 风扇 %s follow_other → 后备源 %s", fan.Name, src)
+		return c.curvePWMFromResolvedTemp(fan, global, t2)
+	default:
+		return -1, nil
+	}
 }
 
 // applyStopHysteresis 滞回停转逻辑
@@ -408,7 +461,7 @@ func (c *Controller) resolveSourceTemp(
 	return nil
 }
 
-func (c *Controller) applyPWM(fan model.FanConfig, global model.GlobalConfig, target int) int {
+func (c *Controller) applyPWM(fan model.FanConfig, target int, deadzone int) int {
 	target = clampPWM(target)
 
 	// 获取真实当前 PWM（从缓存或硬件读取）
@@ -423,7 +476,10 @@ func (c *Controller) applyPWM(fan model.FanConfig, global model.GlobalConfig, ta
 		c.lastPWM[fan.ID] = current
 	}
 
-	if abs(target-current) < global.PWMDeadzone {
+	if deadzone < 0 {
+		deadzone = 0
+	}
+	if abs(target-current) < deadzone {
 		return current
 	}
 
@@ -557,6 +613,20 @@ func (c *Controller) autoDiscoverFansOnFirstRun() {
 		return
 	}
 
+	g := cfg.Global
+	dz := g.PWMDeadzone
+	if dz < 0 || dz > 255 {
+		dz = 5
+	}
+	hys := g.StopHysteresis
+	if hys < 0 || hys > 30 {
+		hys = 2
+	}
+	em := g.EmergencyTemp
+	if em <= 0 || em > 120 {
+		em = 80
+	}
+
 	cfg.Fans = make([]model.FanConfig, 0, len(scanned))
 	for i, item := range scanned {
 		id := strings.TrimSpace(item["id"])
@@ -569,14 +639,23 @@ func (c *Controller) autoDiscoverFansOnFirstRun() {
 			name = fmt.Sprintf("Fan %d", i+1)
 		}
 
+		// 简化：为每个风扇创建独立的指针值
+		deadzoneVal := dz
+		hysteresisVal := hys
+		emergencyVal := em
+
 		cfg.Fans = append(cfg.Fans, model.FanConfig{
-			ID:         id,
-			Name:       name,
-			PWMPath:    strings.TrimSpace(item["pwm_path"]),
-			RPMPath:    strings.TrimSpace(item["rpm_path"]),
-			EnablePath: strings.TrimSpace(item["enable_path"]),
-			Mode:       model.FanModeCurve,
-			Source:     "cpu",
+			ID:             id,
+			Name:           name,
+			PWMPath:        strings.TrimSpace(item["pwm_path"]),
+			RPMPath:        strings.TrimSpace(item["rpm_path"]),
+			EnablePath:     strings.TrimSpace(item["enable_path"]),
+			Mode:           model.FanModeCurve,
+			Source:         "cpu",
+			FallbackPolicy: model.FallbackKeepLast,
+			PWMDeadzone:    &deadzoneVal,
+			StopHysteresis: &hysteresisVal,
+			EmergencyTemp:  &emergencyVal,
 			Curve: []model.CurvePoint{
 				{Temp: 35, PWM: 80},
 				{Temp: 45, PWM: 120},
@@ -646,6 +725,27 @@ func interpolateCurve(points []model.CurvePoint, temp float64) int {
 	}
 	result := points[len(points)-1].PWM
 	return result
+}
+
+func effectivePWMDeadzone(fan model.FanConfig, global model.GlobalConfig) int {
+	if fan.PWMDeadzone != nil {
+		return clampPWM(*fan.PWMDeadzone)
+	}
+	return clampPWM(global.PWMDeadzone)
+}
+
+func effectiveStopHysteresis(fan model.FanConfig, global model.GlobalConfig) float64 {
+	if fan.StopHysteresis != nil {
+		return *fan.StopHysteresis
+	}
+	return global.StopHysteresis
+}
+
+func effectiveEmergencyTemp(fan model.FanConfig, global model.GlobalConfig) float64 {
+	if fan.EmergencyTemp != nil && *fan.EmergencyTemp > 0 {
+		return *fan.EmergencyTemp
+	}
+	return global.EmergencyTemp
 }
 
 func clampPWM(v int) int {

@@ -30,6 +30,8 @@ backend/web/
 *.dylib
 *.test
 *.out
+go.work
+go.work.sum
 
 # ===== 后端本地运行时数据 =====
 backend/configs/

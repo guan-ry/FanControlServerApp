@@ -22,6 +22,16 @@ export interface FanConfig {
     source: string;
     manual_pwm: number;
     curve: CurvePoint[];
+    /** 非空则覆盖全局：最小 PWM 调整死区（0–255） */
+    pwm_deadzone?: number;
+    /** 非空则覆盖全局：停转滞回温差（°C） */
+    stop_hysteresis?: number;
+    /** 非空则覆盖全局：过热全速阈值（°C） */
+    emergency_temp?: number;
+    /** 主温度源无读数时：keep_last | stop | min_pwm | full_speed | follow_other */
+    fallback_policy?: string;
+    fallback_min_pwm?: number;
+    fallback_follow_source?: string;
 }
 
 export interface GlobalConfig {

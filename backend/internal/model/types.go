@@ -30,6 +30,15 @@ const (
 	StopBehaviorSet  StopBehavior = "set"
 )
 
+// 主温度源不可用（如 SATA 休眠）时的风扇降级策略。
+const (
+	FallbackKeepLast    = "keep_last"
+	FallbackStop        = "stop"
+	FallbackMinPWM      = "min_pwm"
+	FallbackFullSpeed   = "full_speed"
+	FallbackFollowOther = "follow_other"
+)
+
 type CurvePoint struct {
 	Temp float64 `json:"temp"`
 	PWM  int     `json:"pwm"`
@@ -45,8 +54,17 @@ type FanConfig struct {
 	Source     string       `json:"source"`
 	ManualPWM  int          `json:"manual_pwm"`
 	Curve      []CurvePoint `json:"curve"`
+	// 以下三项为可选覆盖：nil 表示使用 GlobalConfig 中的对应默认值。
+	PWMDeadzone    *int     `json:"pwm_deadzone,omitempty"`
+	StopHysteresis *float64 `json:"stop_hysteresis,omitempty"`
+	EmergencyTemp  *float64 `json:"emergency_temp,omitempty"`
+	// 主温度源无读数时的行为；空则等价 keep_last。
+	FallbackPolicy       string `json:"fallback_policy,omitempty"`
+	FallbackMinPWM       int    `json:"fallback_min_pwm,omitempty"`       // 策略 min_pwm 时使用，默认在规范化中保证 ≥1
+	FallbackFollowSource string `json:"fallback_follow_source,omitempty"` // 策略 follow_other 时的后备温度源 ID
 }
 
+// GlobalConfig 全机共享；PWMDeadzone / StopHysteresis / EmergencyTemp 可被各 FanConfig 同名字段覆盖。
 type GlobalConfig struct {
 	PWMDeadzone      int               `json:"pwm_deadzone"`
 	UpdateIntervalMS int               `json:"update_interval_ms"`
@@ -60,7 +78,7 @@ type GlobalConfig struct {
 	SensorHidden     []string          `json:"sensor_hidden,omitempty"`  // 隐藏的传感器ID列表
 }
 
-const CurrentConfigVersion = 1
+const CurrentConfigVersion = 2
 
 type Config struct {
 	Version int          `json:"version"`
