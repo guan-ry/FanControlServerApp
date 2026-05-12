@@ -631,10 +631,6 @@
                         </button>
                     </div>
                 </div>
-                <p id="fe-source-warn" class="hidden text-[11px] text-amber-400 mt-1 flex items-center gap-1">
-                    <iconify-icon icon="mdi:alert-circle-outline" class="text-xs"></iconify-icon>
-                    SATA 硬盘休眠等导致主温度源无读数时，将按「降级与调速参数」中的策略控制本风扇 PWM
-                </p>
 
                 <div class="mt-4 rounded-lg border border-slate-700/50 bg-slate-800/30 p-4 space-y-4">
                     <h4 class="text-sm font-bold flex items-center gap-2 text-slate-200">
@@ -647,7 +643,7 @@
                                class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">
                             温度源失效策略
                             <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
-                                  title="仅自动模式：当主温度源不可用（如 SATA 休眠、组合源全空）时如何设定 PWM。保持当前=不写硬件；其余为固定目标或按后备源走曲线。">?</span>
+                                  title="当风扇依赖的温度传感器无效（如硬盘休眠）时，如何控制风扇转速。">?</span>
                         </label>
                         <select id="fe-fallback-policy"
                                 class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2 text-slate-200 text-sm focus:outline-none focus:ring-1 focus:ring-sky-500">
@@ -664,7 +660,7 @@
                                class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">
                             最低安全 PWM
                             <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
-                                  title="策略为「最低安全转速」时生效，范围 1–255；保存时若为 0 会规范为 80。">?</span>
+                                  title="选择“最低安全转速”时生效，设置一个不会停转的基础转速（0-255，0代表停转）。">?</span>
                         </label>
                         <input type="number" id="fe-fallback-min-pwm" min="1" max="255" value="80"
                                class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2"/>
@@ -674,7 +670,7 @@
                         <label class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug pt-2">
                             后备温度源
                             <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
-                                  title="与主温度源下拉相同选项；简洁/高级切换仍使用上方「简洁|高级」按钮。">?</span>
+                                  title="当主温度源失效且策略为“跟随其他温度源”时，使用这个备选传感器来调速。">?</span>
                         </label>
                         <div id="fe-fb-source-wrapper" class="relative flex-1 min-w-0">
                             <button type="button" id="fe-fb-source-btn"
@@ -693,7 +689,7 @@
                         <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
                             <label for="fe-deadzone" class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">最小调整幅度<span
                                     class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
-                                    title="留空则使用风扇默认值 5。填写则仅本风扇使用（0–255）。">?</span></label>
+                                    title="避免频繁微调：只有当目标转速与当前转速的差距超过此值时，才实际调节。值越大越稳定。">?</span></label>
                             <input type="number" id="fe-deadzone" min="0" max="255" step="1" placeholder="留空=默认5"
                                    class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2 placeholder-slate-600"/>
                         </div>
@@ -701,7 +697,7 @@
                             <label for="fe-hysteresis"
                                    class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">停转温差 (°C)<span
                                     class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
-                                    title="留空则使用风扇默认值 5°C。">?</span></label>
+                                    title="防止温度在曲线首点附近波动导致风扇频繁启停。温度需低于首点温度减去此差值才会停转。">?</span></label>
                             <input type="number" id="fe-hysteresis" min="0" max="30" step="0.5" placeholder="留空=默认5"
                                    class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2 placeholder-slate-600"/>
                         </div>
@@ -709,7 +705,7 @@
                             <label for="fe-emergency" class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">过热阈值
                                 (°C)<span
                                         class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
-                                        title="留空则使用风扇默认值 80°C。">?</span></label>
+                                        title="当温度超过此值时，风扇会立刻全速运转（PWM=255），优先保障散热安全。">?</span></label>
                             <input type="number" id="fe-emergency" min="1" max="120" step="1" placeholder="留空=默认80"
                                    class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2 placeholder-slate-600"/>
                         </div>

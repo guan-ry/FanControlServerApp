@@ -96,24 +96,20 @@ function updateRingProgress(ringId: string, percentage: number) {
 
 function updateSubtitleDate() {
     updateSystemTime();
-    // 每秒更新运行时间（基于后端最后一次推送的时间计算）
     updateUptimeFromServer();
 }
 
-// 存储服务器最后一次推送时的 uptime 和本地时间
 let lastUptime = 0;
 let lastUptimeReceived = 0;
 
 function updateUptimeFromServer() {
     if (lastUptime > 0) {
-        // 计算从收到服务器数据到现在过了多少秒
         const elapsed = Math.floor((Date.now() - lastUptimeReceived) / 1000);
         const currentUptime = lastUptime + elapsed;
         $("uptime-text").textContent = formatUptime(currentUptime);
     }
 }
 
-// 在收到后端遥测数据时更新
 function onTelemetryReceived(t: Telemetry) {
     lastUptime = t.uptime ?? 0;
     lastUptimeReceived = Date.now();
@@ -122,14 +118,12 @@ function onTelemetryReceived(t: Telemetry) {
 let editFanIdx: number | null = null;
 let lastScanResults: ScannedFan[] = [];
 type SourceMode = "simple" | "advanced";
-
-// 风扇编辑对话框打开时的 source_mode 快照；用于"取消未保存"时回滚。
 let originalSourceMode: SourceMode | null = null;
 
-function $(id: string): HTMLElement {
+function $<T extends HTMLElement = HTMLElement>(id: string): T {
     const el = document.getElementById(id);
     if (!el) throw new Error(`#${id} not found`);
-    return el;
+    return el as T;
 }
 
 function esc(s: string): string {
@@ -154,7 +148,6 @@ const TOAST_CLASS: Record<ToastKind, string> = {
     info: "border-slate-500/40 bg-slate-900/92 text-slate-100"
 };
 
-/** 非阻塞提示（替代 window.alert） */
 function toast(message: string, kind: ToastKind = "info") {
     const root = document.getElementById("toast-root");
     if (!root) {
@@ -181,7 +174,6 @@ function toast(message: string, kind: ToastKind = "info") {
     }, ms);
 }
 
-/** 确认框（替代 window.confirm），依赖 #confirm-action-dialog 内 form method=dialog */
 function openConfirm(message: string): Promise<boolean> {
     const dlg = $("confirm-action-dialog") as HTMLDialogElement;
     $("confirm-action-message").textContent = message;
@@ -213,37 +205,23 @@ function pairsToCurve(pairs: number[][]): CurvePoint[] {
 
 function applyTelemetry(t: Telemetry) {
     telemetry = t;
-
-    // CPU
     $("cpu-temp-text").textContent = formatTemp(t.cpu_temp);
     updateRingProgress("cpu-ring", t.cpu_usage);
     $("cpu-ring-text").textContent = `${t.cpu_usage.toFixed(0)}%`;
-
-    // GPU
     $("gpu-temp-text").textContent = formatTemp(t.gpu_temp);
-    updateRingProgress("gpu-ring", 0); // GPU使用率暂未提供
+    updateRingProgress("gpu-ring", 0);
     $("gpu-ring-text").textContent = "--%";
-
-    // 内存
     updateRingProgress("mem-ring", t.mem_usage);
     $("mem-ring-text").textContent = `${t.mem_usage.toFixed(0)}%`;
-    // 计算可用内存
     if (t.mem_total && t.mem_total > 0) {
         const available = (t.mem_total * (100 - t.mem_usage) / 100).toFixed(2);
         $("mem-available-text").textContent = available;
     } else {
-        // 估算可用内存（假设总内存为使用量的1.5倍）
         const estimated = (t.mem_usage * 0.01 * 16 * (100 - t.mem_usage) / 100).toFixed(2);
         $("mem-available-text").textContent = estimated;
     }
-
-    // 硬盘
     $("disk-avg-text").textContent = formatTemp(t.disks.avg_temp);
-
-    // 运行时间（收到后端数据时更新）
     onTelemetryReceived(t);
-
-
     syncFanCardsFromTelemetryOrRender();
     renderStorageList();
     updateSensorMgrTemps();
@@ -257,49 +235,37 @@ function applyTelemetry(t: Telemetry) {
 function renderStorageList() {
     const list = $("storage-list");
     const d = telemetry?.disks.details ?? [];
-
-    // 如果列表为空且当前也为空，不重绘
     if (d.length === 0) {
         if (list.children.length === 0) return;
         list.innerHTML = "";
         return;
     }
-
-    // 如果数量变化，完全重绘
     if (list.children.length !== d.length) {
         list.innerHTML = d
-            .map(
-                disk => `
+            .map(disk => `
       <div class="flex justify-between items-center text-xs" data-disk-name="${esc(disk.name)}">
         <span class="text-slate-400 flex items-center gap-2"><iconify-icon icon="mdi:harddisk"></iconify-icon> ${esc(disk.name)}</span>
         <span class="disk-temp font-mono">${
-                    disk.status === "sleep" ? '<span class="text-slate-500 uppercase">休眠</span>' : `<span class="text-emerald-400">${formatTemp(disk.temp)}<span class="text-slate-500 text-xs">°C</span></span>`
-                }</span>
-      </div>`
-            )
+                disk.status === "sleep" ? '<span class="text-slate-500 uppercase">休眠</span>' : `<span class="text-emerald-400">${formatTemp(disk.temp)}<span class="text-slate-500 text-xs">°C</span></span>`
+            }</span>
+      </div>`)
             .join("");
         return;
     }
-
-    // 数量不变，只更新温度值和状态，避免闪烁
     d.forEach((disk, idx) => {
         const item = list.children[idx] as HTMLElement;
         if (item.dataset.diskName !== disk.name) {
-            // 名称变化，完全重绘
             list.innerHTML = d
-                .map(
-                    disk => `
+                .map(disk => `
         <div class="flex justify-between items-center text-xs" data-disk-name="${esc(disk.name)}">
           <span class="text-slate-400 flex items-center gap-2"><iconify-icon icon="mdi:harddisk"></iconify-icon> ${esc(disk.name)}</span>
           <span class="disk-temp font-mono">${
-                        disk.status === "sleep" ? '<span class="text-slate-500 uppercase">休眠</span>' : `<span class="text-emerald-400">${formatTemp(disk.temp)}<span class="text-slate-500 text-xs">°C</span></span>`
-                    }</span>
-        </div>`
-                )
+                    disk.status === "sleep" ? '<span class="text-slate-500 uppercase">休眠</span>' : `<span class="text-emerald-400">${formatTemp(disk.temp)}<span class="text-slate-500 text-xs">°C</span></span>`
+                }</span>
+        </div>`)
                 .join("");
             return;
         }
-        // 更新温度和状态
         const tempSpan = item.querySelector(".disk-temp");
         if (tempSpan) {
             const isSleep = disk.status === "sleep";
@@ -319,17 +285,14 @@ function runtimeFor(id: string) {
     return telemetry?.fans.find(f => f.id === id);
 }
 
-/** 与 WebSocket 推送频率解耦：仅在结构变化时 innerHTML，否则就地更新，避免整卡重绘与动画重启导致闪烁 */
 function syncFanCardsFromTelemetryOrRender() {
     const root = $("fan-root");
     const fans = config.fans;
     const cards = root.querySelectorAll(":scope > [data-fan-id]");
-
     if (fans.length === 0) {
         if (root.innerHTML !== "") root.innerHTML = "";
         return;
     }
-
     if (cards.length !== fans.length) {
         renderFanCards();
         return;
@@ -340,7 +303,6 @@ function syncFanCardsFromTelemetryOrRender() {
             return;
         }
     }
-
     fans.forEach((fan, idx) => {
         const card = cards[idx] as HTMLElement;
         const rt = runtimeFor(fan.id);
@@ -348,18 +310,13 @@ function syncFanCardsFromTelemetryOrRender() {
         const stopped = rpm <= 0 || rt?.status === "stopped";
         const manual = fan.mode === "manual";
         const pwmVal = fan.manual_pwm;
-
-        // 更新风扇名称
         const fanName = card.querySelector("[data-fan-name]") as HTMLElement | null;
         if (fanName) fanName.textContent = fan.name;
-
-        // 更新 PWM 路径
         const pwmPath = card.querySelector("[data-fan-pwm-path]") as HTMLElement | null;
         if (pwmPath) {
             pwmPath.textContent = fan.pwm_path || "未配置 PWM";
             pwmPath.setAttribute("title", fan.pwm_path || "");
         }
-
         const iconBg = card.querySelector("[data-fan-icon-bg]") as HTMLElement | null;
         const iconEl = card.querySelector("[data-fan-icon]") as HTMLElement | null;
         if (iconBg) {
@@ -369,7 +326,6 @@ function syncFanCardsFromTelemetryOrRender() {
             iconEl.setAttribute("icon", stopped ? "mdi:fan-off" : "mdi:fan");
             iconEl.className = stopped ? "text-slate-500" : "text-sky-400 animate-spin-slow";
         }
-
         const rpmRow = card.querySelector("[data-fan-rpm-row]") as HTMLElement | null;
         const rpmNum = card.querySelector("[data-fan-rpm]") as HTMLElement | null;
         const rpmUnit = card.querySelector("[data-fan-rpm-unit]") as HTMLElement | null;
@@ -378,7 +334,6 @@ function syncFanCardsFromTelemetryOrRender() {
         if (rpmRow) {
             rpmRow.className = `text-xl font-mono font-bold ${stopped ? "text-slate-500 italic" : "text-sky-400"}`;
         }
-
         const curveBtn = card.querySelector('[data-mode="curve"]') as HTMLElement | null;
         const manualBtn = card.querySelector('[data-mode="manual"]') as HTMLElement | null;
         if (curveBtn) {
@@ -387,19 +342,15 @@ function syncFanCardsFromTelemetryOrRender() {
         if (manualBtn) {
             manualBtn.className = `px-2.5 py-0.5 text-xs rounded-md ${manual ? "bg-sky-500 text-white shadow-lg" : "text-slate-400 hover:text-white"}`;
         }
-
         const manualUi = card.querySelector("[data-manual-ui]") as HTMLElement | null;
         const autoUi = card.querySelector("[data-auto-ui]") as HTMLElement | null;
         if (manualUi) manualUi.classList.toggle("hidden", !manual);
         if (autoUi) autoUi.classList.toggle("hidden", manual);
-
-        // 更新温度源显示（仅显示源名，温度只在下拉中展示）
         const fanSource = card.querySelector("[data-fan-source]") as HTMLElement | null;
         if (fanSource) {
             fanSource.textContent = getSourceLabel(fan.source);
             fanSource.setAttribute("data-source", fan.source);
         }
-
         const pwmDisplay = card.querySelector("[data-fan-pwm-display]") as HTMLElement | null;
         const range = card.querySelector('input[data-field="pwm-range"]') as HTMLInputElement | null;
         if (pwmDisplay) pwmDisplay.textContent = `${pwmVal} / 255`;
@@ -467,20 +418,15 @@ function renderFanCards() {
         .join("");
 }
 
-// resolveSourceTemp 解析一个 source 字符串对应的当前温度（°C）。
-// 与后端 controller.resolveSourceTemp 行为对齐，用于在 UI 上展示「源 + 当前温度」。
 function resolveSourceTemp(source: string): number | undefined {
     const t = telemetry;
     if (!t) return undefined;
-
     if (source === "cpu") return t.cpu_temp;
     if (source === "gpu") return t.gpu_temp;
     if (source === "disk_avg") return t.disks?.avg_temp;
     if (source === "disk_max") {
         let best: number | undefined;
-        for (const d of t.disks?.details ?? []) {
-            if (d.temp != null && (best === undefined || d.temp > best)) best = d.temp;
-        }
+        for (const d of t.disks?.details ?? []) if (d.temp != null && (best === undefined || d.temp > best)) best = d.temp;
         return best;
     }
     if (source === "max") {
@@ -488,12 +434,8 @@ function resolveSourceTemp(source: string): number | undefined {
         if (t.cpu_temp != null) all.push(t.cpu_temp);
         if (t.gpu_temp != null) all.push(t.gpu_temp);
         if (t.disks?.avg_temp != null) all.push(t.disks.avg_temp);
-        for (const d of t.disks?.details ?? []) {
-            if (d.temp != null) all.push(d.temp);
-        }
-        for (const s of t.sensors ?? []) {
-            if (s.temp != null) all.push(s.temp);
-        }
+        for (const d of t.disks?.details ?? []) if (d.temp != null) all.push(d.temp);
+        for (const s of t.sensors ?? []) if (s.temp != null) all.push(s.temp);
         return all.length ? Math.max(...all) : undefined;
     }
     if (source.startsWith("disk:")) {
@@ -505,21 +447,16 @@ function resolveSourceTemp(source: string): number | undefined {
         return (t.sensors ?? []).find(s => s.id === id)?.temp;
     }
     if (source.startsWith("combo_avg:")) {
-        const vals = source.slice("combo_avg:".length).split(",")
-            .map(k => resolveSourceTemp(k.trim()))
-            .filter((v): v is number => v != null);
+        const vals = source.slice("combo_avg:".length).split(",").map(k => resolveSourceTemp(k.trim())).filter((v): v is number => v != null);
         return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : undefined;
     }
     if (source.startsWith("combo_max:")) {
-        const vals = source.slice("combo_max:".length).split(",")
-            .map(k => resolveSourceTemp(k.trim()))
-            .filter((v): v is number => v != null);
+        const vals = source.slice("combo_max:".length).split(",").map(k => resolveSourceTemp(k.trim())).filter((v): v is number => v != null);
         return vals.length ? Math.max(...vals) : undefined;
     }
     return undefined;
 }
 
-// 单个温度文本的辅助函数：有温度返回 "47.3°C"，休眠返回 "休眠"，其余返回 "—"
 function fmtTemp(t: number | undefined, sleep?: boolean): string {
     if (sleep) return "休眠";
     return t != null ? `${t.toFixed(1)}°C` : "—";
@@ -537,23 +474,18 @@ interface SourceGroup {
     items: SourceItem[];
 }
 
-// 收集当前模式下要展示的源分组。简洁模式 1 组；极客模式按 chip+device 分组。
 function collectSourceGroups(mode: "simple" | "advanced"): SourceGroup[] {
     const disks = telemetry?.disks.details ?? [];
     const allSensors = telemetry?.sensors ?? [];
     const hidden = new Set(config.global.sensor_hidden ?? []);
     const aliases = config.global.sensor_aliases ?? {};
     const sensors = allSensors.filter(s => !hidden.has(s.id));
-
     if (mode === "simple") {
         const items: SourceItem[] = [
             {v: "cpu", name: "CPU"},
             {v: "gpu", name: "GPU"},
         ];
-        disks.forEach(d => items.push({
-            v: `disk:${d.name}`, name: `硬盘 ${d.name}`,
-            sleep: d.status === "sleep",
-        }));
+        disks.forEach(d => items.push({v: `disk:${d.name}`, name: `硬盘 ${d.name}`, sleep: d.status === "sleep"}));
         items.push({v: "disk_avg", name: "硬盘平均"});
         items.push({v: "disk_max", name: "硬盘最大"});
         items.forEach(it => {
@@ -561,7 +493,6 @@ function collectSourceGroups(mode: "simple" | "advanced"): SourceGroup[] {
         });
         return [{label: "常用温度源", items}];
     }
-
     const groups = new Map<string, SourceItem[]>();
     for (const s of sensors) {
         const key = s.device ? `${s.chip} · ${s.device}` : s.chip;
@@ -575,25 +506,19 @@ function collectSourceGroups(mode: "simple" | "advanced"): SourceGroup[] {
     return [...groups.entries()].map(([label, items]) => ({label, items}));
 }
 
-// renderSourceOptions 生成自定义下拉浮层的 innerHTML。
-// 每行用 flex 实现真正的左右两端对齐：源名靠左、温度靠右。
 function renderSourceOptions(current: string, mode: "simple" | "advanced", comboStrategyRadioName = "combo-strategy"): string {
     const groups = collectSourceGroups(mode);
     let html = "";
     let currentInList = false;
-
     for (const g of groups) {
         html += `<div class="px-3 py-1 text-[10px] uppercase tracking-wider text-sky-400 bg-slate-900 sticky top-0 z-10 border-b border-slate-700/50">${esc(g.label)}</div>`;
         for (const it of g.items) {
             if (it.v === current) currentInList = true;
             const active = it.v === current;
             const nameCls = active ? "text-sky-300 font-medium" : "text-slate-200";
-            const tempCls = active ? "text-sky-400" : "text-slate-400";
-            const checkIcon = active
-                ? `<iconify-icon class="text-sky-400 ml-2 flex-shrink-0" icon="mdi:check"></iconify-icon>`
-                : "";
+            const sleepCls = it.sleep ? "text-slate-500 italic" : (active ? "text-sky-400" : "text-slate-400");
+            const checkIcon = active ? `<iconify-icon class="text-sky-400 ml-2 flex-shrink-0" icon="mdi:check"></iconify-icon>` : "";
             const tempText = fmtTemp(it.temp, it.sleep);
-            const sleepCls = it.sleep ? "text-slate-500 italic" : tempCls;
             html += `
 <button type="button" data-source-value="${esc(it.v)}"
         class="w-full flex items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-slate-700/70 ${active ? "bg-slate-700/40" : ""}">
@@ -605,37 +530,26 @@ function renderSourceOptions(current: string, mode: "simple" | "advanced", combo
 </button>`;
         }
     }
-
-    // combo source 也算"在列表里"——它不是某个具体 option，但在高级模式的组合区域能回显。
     const isCombo = current.startsWith("combo_avg:") || current.startsWith("combo_max:");
     if (isCombo) currentInList = true;
-
-    // 当前选中的源不在本模式的列表里（跨模式 / 硬件变化 / 被隐藏），加一条提示行。
     if (current && !currentInList) {
         const tip = `（当前选中：${esc(getSourceLabel(current))}）`;
         html = `<div class="px-3 py-2 text-xs text-amber-400 italic bg-amber-500/5 border-b border-amber-500/30">${tip}</div>` + html;
     }
-
-    // 高级模式：在 sensor 列表下方追加组合温度源区域
     if (mode === "advanced") {
         html += renderComboSection(current, comboStrategyRadioName);
     }
-
     return html;
 }
 
-// 渲染高级模式底部的"组合温度源"区域（内嵌在同一浮层中）。
-// comboStrategyRadioName 需唯一，避免主温度源与后备源两个浮层同时存在时 radio 同名冲突。
 function renderComboSection(currentSource: string, comboStrategyRadioName: string): string {
     const items = collectAllSourceItems();
     const combo = parseComboSource(currentSource);
     const selected = new Set<string>(combo?.keys ?? []);
     const strategy = combo?.strategy ?? "avg";
     const isComboActive = combo !== null;
-
     const computedTemp = isComboActive ? resolveSourceTemp(currentSource) : undefined;
     const countSelected = selected.size;
-
     let html = `
 <div class="border-t-2 border-sky-500/30 mt-1" data-combo-radio-name="${esc(comboStrategyRadioName)}">
     <div class="px-3 py-1.5 text-[10px] uppercase tracking-wider text-sky-400 bg-slate-900 sticky top-0 z-10 border-b border-slate-700/50 flex items-center justify-between">
@@ -653,7 +567,6 @@ function renderComboSection(currentSource: string, comboStrategyRadioName: strin
             </label>
         </div>
     </div>`;
-
     for (const it of items) {
         const checked = selected.has(it.v);
         html += `
@@ -667,7 +580,6 @@ function renderComboSection(currentSource: string, comboStrategyRadioName: strin
     <span class="${it.sleep ? "text-slate-500 italic" : "text-slate-400"} font-mono tabular-nums text-xs flex-shrink-0">${esc(fmtTemp(it.temp, it.sleep))}</span>
 </label>`;
     }
-
     html += `
 <div class="sticky bottom-0 bg-slate-900 border-t border-slate-700/50 px-3 py-2 flex items-center justify-between gap-3">
     <div class="text-xs text-slate-400">
@@ -682,34 +594,19 @@ function renderComboSection(currentSource: string, comboStrategyRadioName: strin
     </button>
 </div>
 </div>`;
-
     return html;
 }
 
-// 检查 source 是否涉及 SATA 盘（可能休眠）。
-function hasSataDisk(source: string): boolean {
-    if (source.startsWith("disk:") && !source.slice(5).startsWith("nvme")) return true;
-    if (source.startsWith("combo_avg:") || source.startsWith("combo_max:")) {
-        const prefix = source.startsWith("combo_avg:") ? "combo_avg:" : "combo_max:";
-        return source.slice(prefix.length).split(",").some(k => hasSataDisk(k.trim()));
-    }
-    return false;
-}
-
-// 写入隐藏 input.value 并刷新触发按钮的显示文本（源名 + 当前温度）。
 function setSourceValue(value: string) {
     const input = document.getElementById("fe-source") as HTMLInputElement | null;
     if (input) input.value = value;
-
     const display = document.getElementById("fe-source-display");
     if (display) {
         const t = resolveSourceTemp(value);
         const tempPart = t != null ? ` · ${t.toFixed(1)}°C` : "";
         display.textContent = `${getSourceLabel(value)}${tempPart}`;
     }
-
-    const warn = document.getElementById("fe-source-warn");
-    if (warn) warn.classList.toggle("hidden", !hasSataDisk(value));
+    // 已删除无用代码 const warn = document.getElementById("fe-source-warn");
 }
 
 function setFallbackSourceValue(value: string) {
@@ -727,7 +624,6 @@ function getSourceLabel(source: string): string {
     const disks = telemetry?.disks.details ?? [];
     const sensors = telemetry?.sensors ?? [];
     const aliases = config.global.sensor_aliases ?? {};
-
     if (source === "cpu") return "CPU";
     if (source === "gpu") return "GPU";
     if (source === "disk_avg") return "硬盘平均";
@@ -756,12 +652,10 @@ function getSourceLabel(source: string): string {
     return source;
 }
 
-// 更新风扇编辑对话框上的"简洁/极客"切换按钮高亮状态，并刷新下拉浮层。
 function resolveSourceMode(): SourceMode {
     return config.global.source_mode === "advanced" ? "advanced" : "simple";
 }
 
-// 组合模式：收集所有可选源（简洁 + 高级合并去重）。
 function collectAllSourceItems(): SourceItem[] {
     const simpleGroups = collectSourceGroups("simple");
     const advancedGroups = collectSourceGroups("advanced");
@@ -778,7 +672,6 @@ function collectAllSourceItems(): SourceItem[] {
     return out;
 }
 
-// 解析 combo source 字符串，返回 {strategy, keys}。
 function parseComboSource(source: string): { strategy: "avg" | "max"; keys: string[] } | null {
     if (source.startsWith("combo_avg:")) {
         return {strategy: "avg", keys: source.slice("combo_avg:".length).split(",").map(k => k.trim()).filter(Boolean)};
@@ -789,21 +682,16 @@ function parseComboSource(source: string): { strategy: "avg" | "max"; keys: stri
     return null;
 }
 
-
-// 从面板当前勾选状态生成 combo source 字符串（menu 为下拉浮层根节点）。
 function buildComboSourceFromPanel(menu: HTMLElement): string {
     const boxes = menu.querySelectorAll<HTMLInputElement>("input[data-combo-cb]:checked");
     const keys = Array.from(boxes).map(cb => cb.value);
     const radioName = menu.querySelector("[data-combo-radio-name]")?.getAttribute("data-combo-radio-name") ?? "combo-strategy";
-    const strategyRadio = menu.querySelector<HTMLInputElement>(
-        `input[type="radio"][name="${CSS.escape(radioName)}"]:checked`,
-    );
+    const strategyRadio = menu.querySelector<HTMLInputElement>(`input[type="radio"][name="${CSS.escape(radioName)}"]:checked`);
     const strategy = strategyRadio?.value === "max" ? "max" : "avg";
     if (keys.length < 2) return "";
     return `combo_${strategy}:${keys.join(",")}`;
 }
 
-// 更新面板底部预览（实时计算）；menu 为包含组合区的浮层根节点。
 function updateComboPreview(menu: HTMLElement) {
     const source = buildComboSourceFromPanel(menu);
     const countEl = menu.querySelector("[data-combo-count]");
@@ -811,7 +699,6 @@ function updateComboPreview(menu: HTMLElement) {
     const confirmBtn = menu.querySelector("[data-combo-confirm]") as HTMLButtonElement | null;
     const boxes = menu.querySelectorAll<HTMLInputElement>("input[data-combo-cb]:checked");
     const count = boxes.length;
-
     if (countEl) countEl.textContent = String(count);
     if (previewEl) {
         const temp = source ? resolveSourceTemp(source) : undefined;
@@ -829,9 +716,7 @@ function applySourceModeUI(mode: SourceMode) {
     if (switcher) {
         switcher.querySelectorAll<HTMLButtonElement>("button[data-source-mode]").forEach(btn => {
             const active = btn.dataset.sourceMode === mode;
-            btn.className = `px-3 py-1 text-xs rounded-md transition-colors ${
-                active ? "bg-sky-500 text-white shadow-lg" : "text-slate-400 hover:text-white"
-            }`;
+            btn.className = `px-3 py-1 text-xs rounded-md transition-colors ${active ? "bg-sky-500 text-white shadow-lg" : "text-slate-400 hover:text-white"}`;
         });
     }
     const menu = document.getElementById("fe-source-menu");
@@ -850,13 +735,10 @@ function updateHistoryChart() {
     if (!historyChart || !telemetry) return;
     const h = telemetry.history;
 
-    // 后端 HistoryPoint.Value 带 omitempty，nil 时字段被省略，
-    // 所以前端需要用 'in' 判断字段是否存在，而非只检查值
     function getValue(p: any): number | null {
         return ("value" in p && p.value != null) ? p.value : null;
     }
 
-    // 计算所有温度数据的最大/最小值，用于 Y 轴自适应
     function getStats(arr: any[]): { min: number; max: number } {
         const vals = arr.map(getValue).filter((v): v is number => v !== null);
         if (vals.length === 0) return {min: Infinity, max: -Infinity};
@@ -868,11 +750,8 @@ function updateHistoryChart() {
     const diskStats = getStats(h.disk_avg);
     const dataMin = Math.min(cpuStats.min, gpuStats.min, diskStats.min);
     const dataMax = Math.max(cpuStats.max, gpuStats.max, diskStats.max);
-    // Y 轴范围：最小值向下取整，最大值向上取整，留适当余量
-    // 如果 dataMin 或 dataMax 是无穷大（所有数据源都为空），使用默认值
     const yMin = isFinite(dataMin) ? Math.floor(dataMin / 5) * 5 - 5 : 0;
     const yMax = isFinite(dataMax) ? Math.ceil(dataMax / 5) * 5 + 5 : 100;
-
     const x = h.cpu_temp.map((p: any) => p.time);
     historyChart.setOption({
         xAxis: {data: x},
@@ -968,8 +847,7 @@ function initFanCurveChartShell() {
     const option: echarts.EChartsOption = {
         backgroundColor: "transparent",
         tooltip: {
-            triggerOn: "none",
-            formatter: (p: unknown) => {
+            triggerOn: "none", formatter: (p: unknown) => {
                 const item = p as { data: [number, number] };
                 const d = item.data;
                 return `温度: ${d[0].toFixed(1)}°C\nPWM: ${d[1].toFixed(0)}`;
@@ -1008,24 +886,22 @@ function initFanCurveChartShell() {
                 lineStyle: {color: "#0ea5e9", width: 4, shadowBlur: 15, shadowColor: "rgba(14, 165, 233, 0.4)"},
                 itemStyle: {color: "#fff", borderColor: "#0ea5e9", borderWidth: 3},
                 areaStyle: {
-                    color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                        {offset: 0, color: "rgba(14, 165, 233, 0.3)"},
-                        {offset: 1, color: "rgba(14, 165, 233, 0)"}
-                    ])
+                    color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{
+                        offset: 0,
+                        color: "rgba(14, 165, 233, 0.3)"
+                    }, {offset: 1, color: "rgba(14, 165, 233, 0)"}])
                 }
             }
         ]
     };
     fanCurveChart.setOption(option);
     updateFanCurveGraphic();
-
     if (!fanCurveChartBound) {
         fanCurveChartBound = true;
         window.addEventListener("resize", () => {
             fanCurveChart?.resize();
             updateFanCurveGraphic();
         });
-
         fanCurveChart.getZr().on("dblclick", (params: { offsetX: number; offsetY: number }) => {
             if (!fanCurveChart) return;
             const pt = fanCurveChart.convertFromPixel("grid", [params.offsetX, params.offsetY]) as number[];
@@ -1036,7 +912,6 @@ function initFanCurveChartShell() {
                 updateFanCurveDataAndGraphic();
             }
         });
-
         chartDom.addEventListener("contextmenu", e => {
             e.preventDefault();
             if (!fanCurveChart) return;
@@ -1067,16 +942,10 @@ function onFanPointDrag(dataIndex: number, pos: number[]) {
     const newPwm = Math.round(Math.max(0, Math.min(255, pt[1])));
     curveData[dataIndex] = [newTemp, newPwm];
     curveData.sort((a, b) => a[0] - b[0]);
-
-    // 排序后重新查找当前拖动点的 dataIndex，确保 tooltip 显示正确数据
     const newDataIndex = curveData.findIndex(p => p[0] === newTemp && p[1] === newPwm);
-
     syncCurveToConfig();
     updateFanCurveDataAndGraphic();
-
-    if (newDataIndex !== -1) {
-        fanCurveChart.dispatchAction({type: "showTip", seriesIndex: 0, dataIndex: newDataIndex});
-    }
+    if (newDataIndex !== -1) fanCurveChart.dispatchAction({type: "showTip", seriesIndex: 0, dataIndex: newDataIndex});
 }
 
 function updateFanCurveGraphic() {
@@ -1112,7 +981,6 @@ function loadCurveIntoEditor() {
     updateFanCurveDataAndGraphic();
 }
 
-/** 当所有风扇均已单独设置某项时，隐藏系统设置中对应全局项（以各风扇为准）。 */
 function updateGlobalTuningRowVisibility() {
     const fans = config.fans;
     const n = fans.length;
@@ -1139,19 +1007,16 @@ function fillGlobalForm() {
     updateGlobalTuningRowVisibility();
 }
 
-// 渲染传感器管理面板的表格行
 function renderSensorMgrTable() {
     const tbody = document.getElementById("sensor-mgr-tbody");
     if (!tbody) return;
     const sensors = telemetry?.sensors ?? [];
     const aliases = config.global.sensor_aliases ?? {};
     const hiddenSet = new Set(config.global.sensor_hidden ?? []);
-
     if (sensors.length === 0) {
         tbody.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-slate-500">暂无传感器数据（等待后端推送）</td></tr>`;
         return;
     }
-
     tbody.innerHTML = sensors.map(s => {
         const chipLabel = s.device ? `${s.chip} · ${s.device}` : s.chip;
         const label = s.label || s.key;
@@ -1176,7 +1041,6 @@ function renderSensorMgrTable() {
     }).join("");
 }
 
-// 从传感器面板收集别名和隐藏列表，写回 config.global
 function readSensorMgrIntoConfig() {
     const tbody = document.getElementById("sensor-mgr-tbody");
     if (!tbody) return;
@@ -1195,7 +1059,6 @@ function readSensorMgrIntoConfig() {
     config.global.sensor_hidden = hidden;
 }
 
-// 实时更新传感器面板的温度列（不重绘整表，避免干扰别名输入）
 function updateSensorMgrTemps() {
     const panel = document.getElementById("sensor-mgr-panel");
     if (!panel || panel.classList.contains("hidden")) return;
@@ -1210,7 +1073,6 @@ function updateSensorMgrTemps() {
     });
 }
 
-// 通用折叠区绑定
 function bindCollapsible(toggleId: string, panelId: string, chevronId: string, onOpen?: () => void) {
     const toggle = document.getElementById(toggleId);
     const panel = document.getElementById(panelId);
@@ -1227,9 +1089,7 @@ function bindCollapsible(toggleId: string, panelId: string, chevronId: string, o
 function updateStopPWMRow() {
     const stopBeh = ($("g-stop-beh") as HTMLSelectElement).value;
     const row = $("g-stop-pwm-row");
-    if (row) {
-        row.classList.toggle("hidden", stopBeh !== "set");
-    }
+    if (row) row.classList.toggle("hidden", stopBeh !== "set");
 }
 
 function clampPWM(v: number): number {
@@ -1246,19 +1106,13 @@ function readGlobalForm(): GlobalConfig {
     };
     const dzEl = document.getElementById("g-deadzone") as HTMLInputElement | null;
     const dzRow = document.getElementById("g-row-deadzone");
-    if (dzEl && dzRow && !dzRow.classList.contains("hidden")) {
-        out.pwm_deadzone = clampPWM(Number(dzEl.value) || 0);
-    }
+    if (dzEl && dzRow && !dzRow.classList.contains("hidden")) out.pwm_deadzone = clampPWM(Number(dzEl.value) || 0);
     const hyEl = document.getElementById("g-hysteresis") as HTMLInputElement | null;
     const hyRow = document.getElementById("g-row-hysteresis");
-    if (hyEl && hyRow && !hyRow.classList.contains("hidden")) {
-        out.stop_hysteresis = Math.max(0, Number(hyEl.value) || 2);
-    }
+    if (hyEl && hyRow && !hyRow.classList.contains("hidden")) out.stop_hysteresis = Math.max(0, Number(hyEl.value) || 2);
     const emEl = document.getElementById("g-emergency") as HTMLInputElement | null;
     const emRow = document.getElementById("g-row-emergency");
-    if (emEl && emRow && !emRow.classList.contains("hidden")) {
-        out.emergency_temp = Math.max(0, Number(emEl.value) || 80);
-    }
+    if (emEl && emRow && !emRow.classList.contains("hidden")) out.emergency_temp = Math.max(0, Number(emEl.value) || 80);
     return out;
 }
 
@@ -1268,22 +1122,25 @@ function updateFallbackPolicyVisibility() {
     ($("fe-fallback-follow-row") as HTMLElement).classList.toggle("hidden", pol !== "follow_other");
 }
 
-// ---------- 风扇编辑弹窗打开/关闭与 body 滚动锁定 ----------
-let fanEditDialog: HTMLDialogElement | null = null;
+let fanEditDialog = $<HTMLDialogElement>("fan-edit-dialog");
+
+function safeCloseFanEditDialog() {
+    fanEditDialog.close();
+    closeFallbackSourceMenu();
+    closeSourceMenu();
+    editFanIdx = null;
+    if (originalSourceMode !== null) {
+        config.global.source_mode = originalSourceMode;
+        originalSourceMode = null;
+    }
+}
 
 function openFanEditDialogWithLock() {
-    if (!fanEditDialog) return;
-    if (fanEditDialog.open) {
-        fanEditDialog.close();
-    }
+    if (fanEditDialog.open) fanEditDialog.close();
     fanEditDialog.showModal();
-
-    // 重置滚动位置到顶部
     requestAnimationFrame(() => {
         const scrollArea = fanEditDialog.querySelector('.flex-1.min-h-0.overflow-y-auto');
-        if (scrollArea) {
-            scrollArea.scrollTop = 0;
-        }
+        if (scrollArea) scrollArea.scrollTop = 0;
     });
 }
 
@@ -1292,7 +1149,6 @@ function openFanSettingsDialog(idx: number) {
     const fan = config.fans[idx];
     if (!fan) return;
     selectedCurveFanId = fan.id;
-
     ($("fan-edit-title") as HTMLElement).textContent = `风扇设置 · ${fan.name}`;
     ($("fe-name") as HTMLInputElement).value = fan.name;
     ($("fe-pwm") as HTMLInputElement).value = fan.pwm_path;
@@ -1301,33 +1157,21 @@ function openFanSettingsDialog(idx: number) {
     setSourceValue(fan.source);
     closeSourceMenu();
     originalSourceMode = resolveSourceMode();
-    // combo source 在高级模式中展示组合区域，自动切到 advanced
     const isCombo = fan.source.startsWith("combo_avg:") || fan.source.startsWith("combo_max:");
     const displayMode: SourceMode = isCombo ? "advanced" : originalSourceMode;
     applySourceModeUI(displayMode);
-
     initFanCurveChartShell();
     loadCurveIntoEditor();
-
-    ($("fe-deadzone") as HTMLInputElement).value =
-        fan.pwm_deadzone != null && !Number.isNaN(fan.pwm_deadzone) ? String(fan.pwm_deadzone) : "";
-    ($("fe-hysteresis") as HTMLInputElement).value =
-        fan.stop_hysteresis != null && !Number.isNaN(fan.stop_hysteresis) ? String(fan.stop_hysteresis) : "";
-    ($("fe-emergency") as HTMLInputElement).value =
-        fan.emergency_temp != null && !Number.isNaN(fan.emergency_temp) ? String(fan.emergency_temp) : "";
-
+    ($("fe-deadzone") as HTMLInputElement).value = (fan.pwm_deadzone != null && !Number.isNaN(fan.pwm_deadzone)) ? String(fan.pwm_deadzone) : "";
+    ($("fe-hysteresis") as HTMLInputElement).value = (fan.stop_hysteresis != null && !Number.isNaN(fan.stop_hysteresis)) ? String(fan.stop_hysteresis) : "";
+    ($("fe-emergency") as HTMLInputElement).value = (fan.emergency_temp != null && !Number.isNaN(fan.emergency_temp)) ? String(fan.emergency_temp) : "";
     const polRaw = fan.fallback_policy;
-    const pol =
-        polRaw === "stop" || polRaw === "min_pwm" || polRaw === "full_speed" || polRaw === "follow_other"
-            ? polRaw
-            : "keep_last";
+    const pol = (polRaw === "stop" || polRaw === "min_pwm" || polRaw === "full_speed" || polRaw === "follow_other") ? polRaw : "keep_last";
     ($("fe-fallback-policy") as HTMLSelectElement).value = pol;
-    ($("fe-fallback-min-pwm") as HTMLInputElement).value =
-        fan.fallback_min_pwm != null && fan.fallback_min_pwm > 0 ? String(fan.fallback_min_pwm) : "80";
+    ($("fe-fallback-min-pwm") as HTMLInputElement).value = (fan.fallback_min_pwm != null && fan.fallback_min_pwm > 0) ? String(fan.fallback_min_pwm) : "80";
     setFallbackSourceValue((fan.fallback_follow_source ?? "").trim() || "cpu");
     closeFallbackSourceMenu();
     updateFallbackPolicyVisibility();
-
     openFanEditDialogWithLock();
     requestAnimationFrame(() => {
         fanCurveChart?.resize();
@@ -1344,32 +1188,24 @@ function readFanFormIntoConfig(): FanConfig | null {
     fan.rpm_path = ($("fe-rpm") as HTMLInputElement).value.trim();
     fan.enable_path = ($("fe-en") as HTMLInputElement).value.trim();
     fan.source = ($("fe-source") as HTMLInputElement).value;
-
     const dz = ($("fe-deadzone") as HTMLInputElement).value.trim();
-    if (dz === "") {
-        delete fan.pwm_deadzone;
-    } else {
+    if (dz === "") delete fan.pwm_deadzone;
+    else {
         const n = Number(dz);
-        if (!Number.isFinite(n)) delete fan.pwm_deadzone;
-        else fan.pwm_deadzone = clampPWM(n);
+        if (Number.isFinite(n)) fan.pwm_deadzone = clampPWM(n); else delete fan.pwm_deadzone;
     }
     const hy = ($("fe-hysteresis") as HTMLInputElement).value.trim();
-    if (hy === "") {
-        delete fan.stop_hysteresis;
-    } else {
+    if (hy === "") delete fan.stop_hysteresis;
+    else {
         const n = Number(hy);
-        if (!Number.isFinite(n)) delete fan.stop_hysteresis;
-        else fan.stop_hysteresis = Math.max(0, Math.min(30, n));
+        if (Number.isFinite(n)) fan.stop_hysteresis = Math.max(0, Math.min(30, n)); else delete fan.stop_hysteresis;
     }
     const em = ($("fe-emergency") as HTMLInputElement).value.trim();
-    if (em === "") {
-        delete fan.emergency_temp;
-    } else {
+    if (em === "") delete fan.emergency_temp;
+    else {
         const n = Number(em);
-        if (!Number.isFinite(n)) delete fan.emergency_temp;
-        else fan.emergency_temp = Math.max(1, Math.min(120, n));
+        if (Number.isFinite(n)) fan.emergency_temp = Math.max(1, Math.min(120, n)); else delete fan.emergency_temp;
     }
-
     const pol = ($("fe-fallback-policy") as HTMLSelectElement).value;
     if (pol === "keep_last") {
         delete fan.fallback_policy;
@@ -1381,14 +1217,9 @@ function readFanFormIntoConfig(): FanConfig | null {
             const n = Number(($("fe-fallback-min-pwm") as HTMLInputElement).value);
             fan.fallback_min_pwm = Number.isFinite(n) ? clampPWM(n) : 80;
             if (fan.fallback_min_pwm <= 0) fan.fallback_min_pwm = 80;
-        } else {
-            delete fan.fallback_min_pwm;
-        }
-        if (pol === "follow_other") {
-            fan.fallback_follow_source = ($("fe-fb-source") as HTMLInputElement).value.trim() || "cpu";
-        } else {
-            delete fan.fallback_follow_source;
-        }
+        } else delete fan.fallback_min_pwm;
+        if (pol === "follow_other") fan.fallback_follow_source = ($("fe-fb-source") as HTMLInputElement).value.trim() || "cpu";
+        else delete fan.fallback_follow_source;
     }
     return fan;
 }
@@ -1408,7 +1239,6 @@ function bindFanRoot() {
                 await refresh();
                 toast("已删除该风扇配置", "success");
             } catch (e) {
-                console.error(e);
                 toast(String(e), "error");
             }
             return;
@@ -1429,12 +1259,10 @@ function bindFanRoot() {
                 await setFanMode(id, mode);
                 await refresh();
             } catch (e) {
-                console.error(e);
                 toast(String(e), "error");
             }
         }
     });
-
     root.addEventListener("input", ev => {
         const t = ev.target as HTMLInputElement;
         const row = t.closest("[data-fan-idx]") as HTMLElement | null;
@@ -1448,8 +1276,6 @@ function bindFanRoot() {
             if (span) span.textContent = `${v} / 255`;
         }
     });
-
-    // 拖动结束（松开鼠标）时才调用接口
     root.addEventListener("pointerup", async ev => {
         const t = ev.target as HTMLInputElement;
         const row = t.closest("[data-fan-idx]") as HTMLElement | null;
@@ -1462,14 +1288,11 @@ function bindFanRoot() {
             try {
                 await setFanManualPWM(id, v);
             } catch (e) {
-                console.error(e);
                 toast(String(e), "error");
             }
         }
     });
 }
-
-// ===== 自定义温度源下拉的开关 / 选择 / 外部点击关闭 / Esc 关闭 =====
 
 function openSourceMenu() {
     const menu = document.getElementById("fe-source-menu");
@@ -1489,8 +1312,7 @@ function closeSourceMenu() {
 }
 
 function isSourceMenuOpen(): boolean {
-    const menu = document.getElementById("fe-source-menu");
-    return !!menu && !menu.classList.contains("hidden");
+    return !!document.getElementById("fe-source-menu")?.classList.contains("hidden") === false;
 }
 
 function openFallbackSourceMenu() {
@@ -1511,8 +1333,7 @@ function closeFallbackSourceMenu() {
 }
 
 function isFallbackSourceMenuOpen(): boolean {
-    const menu = document.getElementById("fe-fb-source-menu");
-    return !!menu && !menu.classList.contains("hidden");
+    return !!document.getElementById("fe-fb-source-menu")?.classList.contains("hidden") === false;
 }
 
 function bindSourceDropdown() {
@@ -1520,12 +1341,10 @@ function bindSourceDropdown() {
     const menu = document.getElementById("fe-source-menu");
     const wrapper = document.getElementById("fe-source-wrapper");
     if (!btn || !menu || !wrapper) return;
-
     btn.addEventListener("click", ev => {
         ev.stopPropagation();
-        if (isSourceMenuOpen()) {
-            closeSourceMenu();
-        } else {
+        if (isSourceMenuOpen()) closeSourceMenu();
+        else {
             closeFallbackSourceMenu();
             const mode = resolveSourceMode();
             const input = document.getElementById("fe-source") as HTMLInputElement | null;
@@ -1533,21 +1352,18 @@ function bindSourceDropdown() {
             openSourceMenu();
         }
     });
-
-    // 简洁/高级模式：点选单个源
     menu.addEventListener("click", ev => {
         const target = (ev.target as HTMLElement).closest<HTMLButtonElement>("button[data-source-value]");
         if (target) {
             const v = target.dataset.sourceValue;
-            if (v === undefined) return;
-            setSourceValue(v);
-            const mode = resolveSourceMode();
-            menu.innerHTML = renderSourceOptions(v, mode);
-            closeSourceMenu();
+            if (v !== undefined) {
+                setSourceValue(v);
+                const mode = resolveSourceMode();
+                menu.innerHTML = renderSourceOptions(v, mode);
+                closeSourceMenu();
+            }
             return;
         }
-
-        // 组合模式：确认按钮
         const confirm = (ev.target as HTMLElement).closest("[data-combo-confirm]") as HTMLButtonElement | null;
         if (confirm && !confirm.disabled) {
             const src = buildComboSourceFromPanel(menu);
@@ -1557,23 +1373,13 @@ function bindSourceDropdown() {
             }
         }
     });
-
-    // 组合模式：checkbox / radio 变化 → 更新预览
     menu.addEventListener("change", ev => {
         const t = ev.target as HTMLInputElement;
-        if (t.dataset.comboCb !== undefined || (t.type === "radio" && t.name.startsWith("combo-strat"))) {
-            updateComboPreview(menu);
-        }
+        if (t.dataset.comboCb !== undefined || (t.type === "radio" && t.name.startsWith("combo-strat"))) updateComboPreview(menu);
     });
-
-    // 点击外部关闭
     document.addEventListener("click", ev => {
-        if (!isSourceMenuOpen()) return;
-        if (wrapper.contains(ev.target as Node)) return;
-        closeSourceMenu();
+        if (isSourceMenuOpen() && !wrapper.contains(ev.target as Node)) closeSourceMenu();
     });
-
-    // Esc 关闭
     document.addEventListener("keydown", ev => {
         if (ev.key === "Escape" && isSourceMenuOpen()) {
             closeSourceMenu();
@@ -1587,12 +1393,10 @@ function bindFallbackSourceDropdown() {
     const menu = document.getElementById("fe-fb-source-menu");
     const wrapper = document.getElementById("fe-fb-source-wrapper");
     if (!btn || !menu || !wrapper) return;
-
     btn.addEventListener("click", ev => {
         ev.stopPropagation();
-        if (isFallbackSourceMenuOpen()) {
-            closeFallbackSourceMenu();
-        } else {
+        if (isFallbackSourceMenuOpen()) closeFallbackSourceMenu();
+        else {
             closeSourceMenu();
             const mode = resolveSourceMode();
             const input = document.getElementById("fe-fb-source") as HTMLInputElement | null;
@@ -1600,16 +1404,16 @@ function bindFallbackSourceDropdown() {
             openFallbackSourceMenu();
         }
     });
-
     menu.addEventListener("click", ev => {
         const target = (ev.target as HTMLElement).closest<HTMLButtonElement>("button[data-source-value]");
         if (target) {
             const v = target.dataset.sourceValue;
-            if (v === undefined) return;
-            setFallbackSourceValue(v);
-            const mode = resolveSourceMode();
-            menu.innerHTML = renderSourceOptions(v, mode, "combo-strategy-fb");
-            closeFallbackSourceMenu();
+            if (v !== undefined) {
+                setFallbackSourceValue(v);
+                const mode = resolveSourceMode();
+                menu.innerHTML = renderSourceOptions(v, mode, "combo-strategy-fb");
+                closeFallbackSourceMenu();
+            }
             return;
         }
         const confirm = (ev.target as HTMLElement).closest("[data-combo-confirm]") as HTMLButtonElement | null;
@@ -1621,20 +1425,13 @@ function bindFallbackSourceDropdown() {
             }
         }
     });
-
     menu.addEventListener("change", ev => {
         const t = ev.target as HTMLInputElement;
-        if (t.dataset.comboCb !== undefined || (t.type === "radio" && t.name.startsWith("combo-strat"))) {
-            updateComboPreview(menu);
-        }
+        if (t.dataset.comboCb !== undefined || (t.type === "radio" && t.name.startsWith("combo-strat"))) updateComboPreview(menu);
     });
-
     document.addEventListener("click", ev => {
-        if (!isFallbackSourceMenuOpen()) return;
-        if (wrapper.contains(ev.target as Node)) return;
-        closeFallbackSourceMenu();
+        if (isFallbackSourceMenuOpen() && !wrapper.contains(ev.target as Node)) closeFallbackSourceMenu();
     });
-
     document.addEventListener("keydown", ev => {
         if (ev.key === "Escape" && isFallbackSourceMenuOpen()) {
             closeFallbackSourceMenu();
@@ -1643,9 +1440,6 @@ function bindFallbackSourceDropdown() {
     });
 }
 
-// bindSourceModeSwitcher 绑定风扇编辑对话框中"简洁/极客"切换按钮的事件。
-// 仅在本地 config 上修改 source_mode + 刷新下拉；持久化等到点"保存设置与曲线"时一起做，
-// 这样"切换后未保存就关闭"会自动回滚，不会留下与 fan.source 不一致的脏状态。
 function bindSourceModeSwitcher() {
     const switcher = document.getElementById("fe-source-mode");
     if (!switcher) return;
@@ -1671,7 +1465,6 @@ async function runHardwareScan() {
         status.textContent = `共发现 ${lastScanResults?.length ?? 0} 个 PWM 通道`;
         renderScanTable();
     } catch (e) {
-        console.error(e);
         status.textContent = `扫描失败：${String(e)}`;
         ($("scan-fans-tbody") as HTMLElement).innerHTML = "";
     }
@@ -1679,20 +1472,16 @@ async function runHardwareScan() {
 
 function renderScanTable() {
     const tbody = $("scan-fans-tbody") as HTMLElement;
-    tbody.innerHTML = lastScanResults
-        .map((s, i) => {
-            const taken = pwmPathTaken(s.pwm_path);
-            return `
+    tbody.innerHTML = lastScanResults.map((s, i) => {
+        const taken = pwmPathTaken(s.pwm_path);
+        return `
 <tr class="border-b border-slate-800 ${taken ? "opacity-50" : ""}">
-  <td class="p-2 align-top">
-    <input type="checkbox" data-scan-idx="${i}" class="scan-cb rounded border-slate-600" ${taken ? "disabled" : ""} />
-  </td>
+  <td class="p-2 align-top"><input type="checkbox" data-scan-idx="${i}" class="scan-cb rounded border-slate-600" ${taken ? "disabled" : ""} /></td>
   <td class="p-2 align-top text-slate-300">${esc(s.name)}<div class="text-[10px] text-slate-500 font-mono mt-1">${esc(s.id)}</div></td>
   <td class="p-2 align-top font-mono text-[10px] text-slate-400 break-all">${esc(s.pwm_path)}</td>
   <td class="p-2 align-top font-mono text-[10px] text-slate-400 break-all">${esc(s.rpm_path || "—")}</td>
 </tr>`;
-        })
-        .join("");
+    }).join("");
 }
 
 async function addScannedFansFromSelection() {
@@ -1703,19 +1492,10 @@ async function addScannedFansFromSelection() {
         const s = lastScanResults[i];
         if (!s || pwmPathTaken(s.pwm_path)) return;
         let id = s.id;
-        if (config.fans.some(f => f.id === id)) {
-            id = `${s.id}-${Date.now().toString(36)}`;
-        }
+        if (config.fans.some(f => f.id === id)) id = `${s.id}-${Date.now().toString(36)}`;
         const fan: FanConfig = {
-            id,
-            name: s.name,
-            pwm_path: s.pwm_path,
-            rpm_path: s.rpm_path,
-            enable_path: s.enable_path,
-            mode: "curve",
-            source: "cpu",
-            manual_pwm: 120,
-            curve: DEFAULT_CURVE.map(c => ({...c}))
+            id, name: s.name, pwm_path: s.pwm_path, rpm_path: s.rpm_path, enable_path: s.enable_path,
+            mode: "curve", source: "cpu", manual_pwm: 120, curve: DEFAULT_CURVE.map(c => ({...c}))
         };
         config.fans.push(fan);
         n++;
@@ -1730,7 +1510,6 @@ async function addScannedFansFromSelection() {
         await refresh();
         toast(`已添加 ${n} 个风扇并已保存到服务端。`, "success");
     } catch (e) {
-        console.error(e);
         toast(String(e), "error");
     }
 }
@@ -1762,12 +1541,11 @@ async function ensureAuth(): Promise<boolean> {
         desc.textContent = "请输入服务器配置的 API Key";
         input.value = "";
     }
-
     errEl.classList.add("hidden");
     dlg.addEventListener("cancel", e => e.preventDefault());
-    dlg.showModal();
 
     return new Promise(resolve => {
+        const btn = $("auth-confirm-btn");
         const handler = async () => {
             const key = input.value.trim();
             if (!key) {
@@ -1780,7 +1558,6 @@ async function ensureAuth(): Promise<boolean> {
                 errEl.classList.remove("hidden");
                 return;
             }
-
             if (setup?.token) {
                 const ok = await confirmAuthSetup(key);
                 if (!ok) {
@@ -1789,14 +1566,12 @@ async function ensureAuth(): Promise<boolean> {
                     return;
                 }
             }
-
             setStoredToken(key);
             dlg.close();
-            btn.removeEventListener("click", handler);
             resolve(true);
         };
-        const btn = $("auth-confirm-btn");
-        btn.addEventListener("click", handler);
+        btn.addEventListener("click", handler, {once: true});
+        dlg.showModal();
     });
 }
 
@@ -1804,7 +1579,7 @@ async function main() {
     updateSubtitleDate();
     window.setInterval(updateSubtitleDate, 1000);
 
-    await initAuthMode()
+    await initAuthMode();
     await ensureAuth();
 
     window.addEventListener("auth-required", () => {
@@ -1829,64 +1604,37 @@ async function main() {
             toast("全局设置已保存", "success");
             await refresh();
         } catch (e) {
-            console.error(e);
             toast(String(e), "error");
         }
     });
-
-    $("btn-global-discard").addEventListener("click", () => {
-        refresh().catch(console.error);
-    });
-
+    $("btn-global-discard").addEventListener("click", () => refresh().catch(console.error));
     $("g-stop-beh").addEventListener("change", updateStopPWMRow);
 
-    fanEditDialog = $("fan-edit-dialog") as HTMLDialogElement;
 
-    function safeCloseFanEditDialog() {
-        if (!fanEditDialog) return;
-        fanEditDialog.close();
-        closeFallbackSourceMenu();
-        closeSourceMenu();
-        editFanIdx = null;
-        if (originalSourceMode !== null) {
-            config.global.source_mode = originalSourceMode;
-            originalSourceMode = null;
-        }
-    }
-
-
-    // 关闭按钮 —— 直接用普通事件绑定，不克隆
     const closeBtn = document.getElementById("fe-close");
     if (closeBtn) {
-        // 移除所有已有监听器（通过替换，简单粗暴）
         const newCloseBtn = closeBtn.cloneNode(true);
         closeBtn.parentNode?.replaceChild(newCloseBtn, closeBtn);
-        newCloseBtn.addEventListener("click", (e) => {
+        newCloseBtn.addEventListener("click", e => {
             e.preventDefault();
             e.stopPropagation();
             safeCloseFanEditDialog();
         });
     }
-
-    // 取消按钮
     const cancelBtn = document.getElementById("fe-cancel");
     if (cancelBtn) {
         const newCancelBtn = cancelBtn.cloneNode(true);
         cancelBtn.parentNode?.replaceChild(newCancelBtn, cancelBtn);
-        newCancelBtn.addEventListener("click", (e) => {
+        newCancelBtn.addEventListener("click", e => {
             e.preventDefault();
             e.stopPropagation();
             safeCloseFanEditDialog();
         });
     }
-
-    // ESC 关闭
-    fanEditDialog.addEventListener("cancel", (e) => {
+    fanEditDialog.addEventListener("cancel", e => {
         e.preventDefault();
         safeCloseFanEditDialog();
     });
-
-    // 弹窗关闭时的额外清理（保证恢复）
     fanEditDialog.addEventListener("close", () => {
         closeFallbackSourceMenu();
         closeSourceMenu();
@@ -1903,15 +1651,12 @@ async function main() {
         try {
             await saveConfig(config);
             await setFanCurve(fan.id, fan.curve);
-            // 标记"已保存"，关闭事件就不再回滚 source_mode
             originalSourceMode = null;
             safeCloseFanEditDialog();
             editFanIdx = null;
-            // 使用已更新的配置刷新风扇卡片
             syncFanCardsFromTelemetryOrRender();
             toast("已保存", "success");
         } catch (e) {
-            console.error(e);
             toast(String(e), "error");
         }
     });
@@ -1928,11 +1673,14 @@ async function main() {
 
     await refresh();
 
+    let ws: WebSocket | null = null;
+
     function connectWs() {
+        if (ws) ws.close();
         const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
         const token = getStoredToken();
         const qs = authRequired && token ? `?token=${encodeURIComponent(token)}` : "";
-        const ws = new WebSocket(`${proto}//${window.location.host}/api/ws${qs}`);
+        ws = new WebSocket(`${proto}//${window.location.host}/api/ws${qs}`);
         ws.addEventListener("open", () => {
             $("ws-text").textContent = "已连接";
             ($("ws-text") as HTMLElement).className = "text-sky-400 text-sm font-mono";
@@ -1940,8 +1688,7 @@ async function main() {
         ws.addEventListener("message", ev => {
             try {
                 applyTelemetry(JSON.parse(ev.data) as Telemetry);
-            } catch {
-                /* ignore */
+            } catch { /* ignore */
             }
         });
         ws.addEventListener("close", () => {
