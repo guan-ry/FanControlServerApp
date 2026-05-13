@@ -92,10 +92,7 @@ func (d *SystemDriver) CPUTemp() (*float64, error) {
 		if raw, err := os.ReadFile(labelPath); err == nil {
 			label = strings.ToLower(strings.TrimSpace(string(raw)))
 		}
-		if label == "" {
-			continue
-		}
-		if !strings.Contains(label, "package") && !strings.Contains(label, "cpu") && !strings.Contains(label, "tdie") {
+		if label != "" && !strings.Contains(label, "package") && !strings.Contains(label, "cpu") && !strings.Contains(label, "tdie") {
 			continue
 		}
 		raw, err := os.ReadFile(p)
