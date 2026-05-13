@@ -2,6 +2,14 @@
 
 飞牛私有云（fnOS）智能风扇与温度管理工具。
 
+## 界面预览
+
+<a href="./docs/images/screenshot1.png"><img src="./docs/images/screenshot1.png" width="200"></a>
+<a href="./docs/images/screenshot2.png"><img src="./docs/images/screenshot2.png" width="200"></a>
+<br>
+<a href="./docs/images/screenshot3.png"><img src="./docs/images/screenshot3.png" width="200"></a>
+<a href="./docs/images/screenshot4.png"><img src="./docs/images/screenshot4.png" width="200"></a>
+
 ## 功能特性
 
 **风扇控制**
