@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -565,17 +566,25 @@ func (c *Controller) SetFanCurve(id string, curve []model.CurvePoint) error {
 // RemoveFan 从配置中移除指定风扇，并清理该风扇的历史曲线缓存。
 func (c *Controller) RemoveFan(id string) error {
 	cfg := c.store.Get()
+	var targetFan *model.FanConfig
 	newFans := make([]model.FanConfig, 0, len(cfg.Fans))
-	found := false
 	for _, f := range cfg.Fans {
-		if f.ID != id {
-			newFans = append(newFans, f)
-		} else {
-			found = true
+		if f.ID == id {
+			targetFan = &f
+			continue
 		}
+		newFans = append(newFans, f)
 	}
-	if !found {
+	if targetFan == nil {
 		return errors.New("未找到指定风扇")
+	}
+	// 恢复自动模式：如果 EnablePath 非空，写入 0 启用硬件自动控制
+	if targetFan.EnablePath != "" {
+		if err := os.WriteFile(targetFan.EnablePath, []byte("0\n"), 0644); err != nil {
+			logrus.Warnf("[控制器] 恢复风扇 %s 自动模式失败: %v", targetFan.Name, err)
+		} else {
+			logrus.Infof("[控制器] 风扇 %s 已恢复为系统自动控制", targetFan.Name)
+		}
 	}
 	cfg.Fans = newFans
 	if err := c.store.Save(cfg); err != nil {
