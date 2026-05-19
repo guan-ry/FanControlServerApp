@@ -5,6 +5,7 @@ import (
 	"embed"
 	"errors"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -57,6 +58,37 @@ func requireAuthFromEnv() bool {
 	return true
 }
 
+// isGatewayMode 是否在飞牛应用环境中运行（由统一网关转发）。
+func isGatewayMode() bool {
+	return os.Getenv("TRIM_APPDEST") != ""
+}
+
+func resolveSocketPath() string {
+	appDest := os.Getenv("TRIM_APPDEST")
+	if appDest == "" {
+		return ""
+	}
+	return filepath.Join(appDest, "target", "app.sock")
+}
+
+func prepareUnixSocket(path string) (net.Listener, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	// 设置 Socket 文件权限为 0660 确保网关可以访问
+	if err = os.Chmod(path, 0o660); err != nil {
+		logrus.Warnf("[主程序] 设置 Socket 权限失败：%v", err)
+	}
+	return ln, nil
+}
+
 func main() {
 	logging.Init()
 	gin.SetMode(gin.ReleaseMode)
@@ -75,16 +107,25 @@ func main() {
 		logging.SetLevel(logLevel)
 	}
 
-	tokenPath := resolveTokenPath()
-	requireAuth := requireAuthFromEnv()
-	auth, err := api.NewAuthManager(tokenPath, requireAuth)
-	if err != nil {
-		logrus.Fatalf("[主程序] 初始化鉴权失败：%v", err)
-	}
-	if requireAuth {
-		logrus.Info("[主程序] API 鉴权：已启用（Bearer + 首次确认）")
+	// 根据运行模式选择鉴权方式
+	gatewayMode := isGatewayMode()
+	var auth *api.AuthManager
+	if gatewayMode {
+		auth = api.NewGatewayAuthManager()
+		logrus.Info("[主程序] 鉴权：统一网关模式（X-Trim-* Header）")
 	} else {
-		logrus.Warn("[主程序] API 鉴权：已关闭（require_auth=false）；任何能访问 HTTP 端口的客户端均可操作风扇配置")
+		tokenPath := resolveTokenPath()
+		requireAuth := requireAuthFromEnv()
+		var err error
+		auth, err = api.NewAuthManager(tokenPath, requireAuth)
+		if err != nil {
+			logrus.Fatalf("[主程序] 初始化鉴权失败：%v", err)
+		}
+		if requireAuth {
+			logrus.Info("[主程序] API 鉴权：已启用（Bearer + 首次确认）")
+		} else {
+			logrus.Warn("[主程序] API 鉴权：已关闭")
+		}
 	}
 
 	controller := service.NewController(store)
@@ -93,19 +134,30 @@ func main() {
 	}
 
 	router := api.NewRouter(webFS, controller, store, auth)
-	addr := listenAddr()
-	server := &http.Server{
-		Addr:    addr,
-		Handler: router,
-	}
+	server := &http.Server{Handler: router}
 
 	go func() {
-		logrus.Infof("[主程序] HTTP 服务已监听，地址：%s，配置文件：%q", addr, cfgPath)
-		if requireAuth && !auth.IsConfirmed() {
-			logrus.Warn("[主程序] API Key 尚未确认，请打开浏览器完成初始设置")
+		var listenErr error
+		if gatewayMode {
+			sock := resolveSocketPath()
+			ln, err := prepareUnixSocket(sock)
+			if err != nil {
+				logrus.Fatalf("[主程序] 创建 Unix Socket 失败：%v", err)
+			}
+			logrus.Infof("[主程序] 统一网关模式，监听 Unix Socket：%s，配置：%q", sock, cfgPath)
+			listenErr = server.Serve(ln)
+		} else {
+			// 非网关模式下才监听 TCP 端口
+			addr := listenAddr()
+			server.Addr = addr
+			logrus.Infof("[主程序] 开发模式，HTTP 监听：%s，配置：%q", addr, cfgPath)
+			if !gatewayMode && auth.RequireAuth() && !auth.IsConfirmed() {
+				logrus.Warn("[主程序] API Key 尚未确认，请打开浏览器完成初始设置")
+			}
+			listenErr = server.ListenAndServe()
 		}
-		if err = server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logrus.Fatalf("[主程序] HTTP 服务异常退出：%v", err)
+		if listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
+			logrus.Fatalf("[主程序] HTTP 服务异常退出：%v", listenErr)
 		}
 	}()
 

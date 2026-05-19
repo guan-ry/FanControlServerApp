@@ -16,35 +16,67 @@ export function clearStoredToken() {
 }
 
 export let authRequired = true;
+export let gatewayMode = false;
+export let currentUser: { uid: string; username: string; is_admin: boolean } | null = null;
+
+function apiBase(): string {
+    const base = import.meta.env.BASE_URL;
+    return base.endsWith("/") ? base.slice(0, -1) : base;
+}
 
 export async function initAuthMode(): Promise<void> {
     try {
-        const {data} = await axios.get<{ auth_required: boolean; setup_pending: boolean }>("/api/auth/status");
-        authRequired = data.auth_required;
+        const {data} = await axios.get<{
+            gateway_mode?: boolean;
+            logged_in?: boolean;
+            auth_required?: boolean;
+            setup_pending?: boolean;
+            user?: { uid: string; username: string; is_admin: boolean };
+        }>(`${apiBase()}/api/auth/status`);
+        if (data.gateway_mode) {
+            gatewayMode = true;
+            authRequired = false;
+            currentUser = data.logged_in && data.user ? data.user : null;
+            return;
+        }
+        authRequired = data.auth_required ?? true;
     } catch {
         authRequired = true;
     }
 }
 
 const client = axios.create({
-    baseURL: "/api"
+    baseURL: `${apiBase()}/api`,
+    withCredentials: true  // 网关模式下需要携带 Cookie/Session
 });
 
 client.interceptors.request.use(config => {
-    const token = getStoredToken();
-    if (authRequired && token) {
-        config.headers.Authorization = `Bearer ${token}`;
+    if (!gatewayMode) {
+        const token = getStoredToken();
+        if (authRequired && token) {
+            config.headers.Authorization = `Bearer ${token}`;
+        }
     }
+    // 网关模式下不添加任何 Header，完全依赖飞牛网关透传
     return config;
 });
 
 client.interceptors.response.use(
     res => res,
     err => {
-        if (err.response?.status === 401 && authRequired) {
+        const status = err.response?.status;
+        const backendMsg = err.response?.data?.error;
+        
+        if (gatewayMode && status === 403) {
+            err.message = backendMsg || "需要管理员权限";
+        } else if (status === 401 && authRequired) {
+            err.message = backendMsg || "认证失效，请重新登录";
             clearStoredToken();
             window.dispatchEvent(new CustomEvent("auth-required"));
+        } else if (backendMsg) {
+            err.message = backendMsg;
         }
+        
         return Promise.reject(err);
     }
 );

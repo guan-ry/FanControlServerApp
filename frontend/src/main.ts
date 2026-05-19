@@ -8,6 +8,7 @@ import {
     fetchConfig,
     fetchInfo,
     fetchScanFans,
+    gatewayMode,
     getStoredToken,
     initAuthMode,
     removeFan,
@@ -1486,6 +1487,7 @@ function renderScanTable() {
 
 async function addScannedFansFromSelection() {
     const boxes = document.querySelectorAll<HTMLInputElement>(".scan-cb:checked:not(:disabled)");
+    const newFans: FanConfig[] = [];
     let n = 0;
     boxes.forEach(box => {
         const i = Number(box.dataset.scanIdx);
@@ -1497,7 +1499,7 @@ async function addScannedFansFromSelection() {
             id, name: s.name, pwm_path: s.pwm_path, rpm_path: s.rpm_path, enable_path: s.enable_path,
             mode: "curve", source: "cpu", manual_pwm: 120, curve: DEFAULT_CURVE.map(c => ({...c}))
         };
-        config.fans.push(fan);
+        newFans.push(fan);
         n++;
     });
     if (n === 0) {
@@ -1505,12 +1507,17 @@ async function addScannedFansFromSelection() {
         return;
     }
     try {
-        await saveConfig(config);
+        // 先保存到服务端
+        const tempConfig = { ...config, fans: [...config.fans, ...newFans] };
+        await saveConfig(tempConfig);
+        // 保存成功后才更新本地配置
+        config = tempConfig;
         ($("scan-fans-dialog") as HTMLDialogElement).close();
         await refresh();
         toast(`已添加 ${n} 个风扇并已保存到服务端。`, "success");
-    } catch (e) {
-        toast(String(e), "error");
+    } catch (e: any) {
+        const msg = e.response?.data?.error || e.message || "保存失败，请检查权限或网络";
+        toast(msg, "error");
     }
 }
 
@@ -1522,6 +1529,7 @@ async function refresh() {
 }
 
 async function ensureAuth(): Promise<boolean> {
+    if (gatewayMode) return true;
     if (!authRequired) return true;
     if (getStoredToken()) return true;
 
@@ -1586,6 +1594,10 @@ async function main() {
         ensureAuth().then(() => refresh().catch(console.error));
     });
 
+    window.addEventListener("admin-required", () => {
+        toast("当前用户无管理员权限，无法修改配置", "error");
+    });
+
     $("btn-refresh").addEventListener("click", () => refresh().catch(console.error));
 
     $("btn-scan-fans").addEventListener("click", () => {
@@ -1597,14 +1609,21 @@ async function main() {
     $("scan-add-selected").addEventListener("click", () => addScannedFansFromSelection().catch(console.error));
 
     $("btn-global-save").addEventListener("click", async () => {
+        const originalGlobal = JSON.parse(JSON.stringify(config.global));
+        
         readSensorMgrIntoConfig();
         config.global = readGlobalForm();
+        
         try {
             await setGlobalConfig(config.global);
             toast("全局设置已保存", "success");
             await refresh();
-        } catch (e) {
-            toast(String(e), "error");
+        } catch (e: any) {
+            config.global = originalGlobal;
+            const msg = e.response?.data?.error || e.message || "保存失败，请检查权限或网络";
+            toast(msg, "error");
+            await refresh();
+            return;
         }
     });
     $("btn-global-discard").addEventListener("click", () => refresh().catch(console.error));
@@ -1645,19 +1664,26 @@ async function main() {
         }
     });
     $("fe-save").addEventListener("click", async () => {
+        const originalConfig = JSON.parse(JSON.stringify(config));
+        
         syncCurveToConfig();
         const fan = readFanFormIntoConfig();
         if (!fan) return;
+        
         try {
             await saveConfig(config);
             await setFanCurve(fan.id, fan.curve);
             originalSourceMode = null;
-            safeCloseFanEditDialog();
             editFanIdx = null;
             syncFanCardsFromTelemetryOrRender();
+            safeCloseFanEditDialog();
             toast("已保存", "success");
-        } catch (e) {
-            toast(String(e), "error");
+        } catch (e: any) {
+            config = originalConfig;
+            const msg = e.response?.data?.error || e.message || "保存失败，请检查权限或网络";
+            toast(msg, "error");
+            safeCloseFanEditDialog();
+            await refresh();
         }
     });
 
@@ -1678,9 +1704,9 @@ async function main() {
     function connectWs() {
         if (ws) ws.close();
         const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const token = getStoredToken();
-        const qs = authRequired && token ? `?token=${encodeURIComponent(token)}` : "";
-        ws = new WebSocket(`${proto}//${window.location.host}/api/ws${qs}`);
+        const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+        const wsPath = `${base}/api/ws`;
+        ws = new WebSocket(`${proto}//${window.location.host}${wsPath}`);
         ws.addEventListener("open", () => {
             $("ws-text").textContent = "已连接";
             ($("ws-text") as HTMLElement).className = "text-sky-400 text-sm font-mono";

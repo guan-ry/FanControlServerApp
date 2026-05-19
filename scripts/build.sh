@@ -20,6 +20,9 @@ if [[ ! -f "${ROOT}/backend/web/index.html" ]]; then
   exit 1
 fi
 
+# 确保 target 目录存在（用于 Unix Socket）
+mkdir -p "${ROOT}/app/target"
+
 step "交叉编译后端 (linux/amd64) -> app/server/fancontrolserver"
 mkdir -p "${ROOT}/app/server"
 ( cd "${ROOT}/backend" && go mod tidy && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o "${ROOT}/app/server/fancontrolserver" . )

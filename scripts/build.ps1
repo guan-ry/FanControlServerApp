@@ -44,6 +44,9 @@ if (-not (Test-Path -LiteralPath $indexHtml))
     Write-Error "Frontend build failed: $indexHtml not found. Please check npm run build output."
 }
 
+# 确保 target 目录存在（用于 Unix Socket）
+New-Item -ItemType Directory -Force -Path (Join-Path $Root "app\target") | Out-Null
+
 Write-Step "Cross-compile backend (GOOS=linux GOARCH=amd64) -> app\server\fancontrolserver"
 $env:GOOS = "linux"
 $env:GOARCH = "amd64"

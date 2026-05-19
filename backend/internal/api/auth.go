@@ -24,6 +24,7 @@ type AuthManager struct {
 	confirmed     bool
 	tokenPath     string
 	confirmedPath string
+	gatewayMode   bool
 }
 
 func NewAuthManager(tokenPath string, requireAuth bool) (*AuthManager, error) {
@@ -36,6 +37,20 @@ func NewAuthManager(tokenPath string, requireAuth bool) (*AuthManager, error) {
 		return nil, err
 	}
 	return am, nil
+}
+
+// NewGatewayAuthManager 创建网关模式鉴权管理器（不使用 API Key）。
+func NewGatewayAuthManager() *AuthManager {
+	return &AuthManager{
+		requireAuth: true,
+		confirmed:   true,
+		gatewayMode: true,
+	}
+}
+
+// GatewayMode 返回是否为网关模式。
+func (am *AuthManager) GatewayMode() bool {
+	return am.gatewayMode
 }
 
 func (am *AuthManager) RequireAuth() bool {
@@ -134,6 +149,9 @@ func (am *AuthManager) validateToken(provided string) bool {
 
 // Middleware 返回 Gin 鉴权中间件，所有受保护的 /api 路由必须通过此中间件。
 func (am *AuthManager) Middleware() gin.HandlerFunc {
+	if am.gatewayMode {
+		return GatewayMiddleware()
+	}
 	return func(c *gin.Context) {
 		if !am.requireAuth {
 			c.Next()
@@ -170,8 +188,30 @@ func extractToken(c *gin.Context) string {
 }
 
 // ---------- Setup / Reset 接口 ----------
-
 func (h *handler) authStatus(c *gin.Context) {
+	if h.auth.gatewayMode {
+		// 调试：打印所有请求头
+		//logrus.Infof("[调试] authStatus - 所有 Headers: %v", c.Request.Header)
+
+		user, ok := GatewayUserFromRequest(c)
+		if !ok {
+			c.JSON(http.StatusOK, gin.H{
+				"gateway_mode": true,
+				"logged_in":    false,
+			})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"gateway_mode": true,
+			"logged_in":    true,
+			"user": gin.H{
+				"uid":      user.UID,
+				"username": user.Username,
+				"is_admin": user.IsAdmin,
+			},
+		})
+		return
+	}
 	req := h.auth.RequireAuth()
 	setupPending := req && !h.auth.IsConfirmed()
 	c.JSON(http.StatusOK, gin.H{
@@ -181,6 +221,10 @@ func (h *handler) authStatus(c *gin.Context) {
 }
 
 func (h *handler) authSetupGet(c *gin.Context) {
+	if h.auth.gatewayMode {
+		c.JSON(http.StatusNotFound, gin.H{"error": "网关模式下不支持此接口"})
+		return
+	}
 	if !h.auth.RequireAuth() {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "鉴权已关闭"})
 		return
@@ -195,6 +239,10 @@ func (h *handler) authSetupGet(c *gin.Context) {
 }
 
 func (h *handler) authSetupPost(c *gin.Context) {
+	if h.auth.gatewayMode {
+		c.JSON(http.StatusNotFound, gin.H{"error": "网关模式下不支持此接口"})
+		return
+	}
 	if !h.auth.RequireAuth() {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "鉴权已关闭"})
 		return
@@ -223,6 +271,10 @@ func (h *handler) authSetupPost(c *gin.Context) {
 }
 
 func (h *handler) authReset(c *gin.Context) {
+	if h.auth.gatewayMode {
+		c.JSON(http.StatusNotFound, gin.H{"error": "网关模式下不支持此接口"})
+		return
+	}
 	if !h.auth.RequireAuth() {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "鉴权已关闭"})
 		return

@@ -30,6 +30,9 @@ start_process() {
         chmod +x "${SERVER_BIN}" 2>/dev/null
     fi
 
+    # 确保 target 目录存在（用于 Unix Socket）
+    mkdir -p "${TRIM_PKGVAR}/target"
+
     log_msg "Starting process ..."
     log_msg "Server binary path: ${SERVER_BIN}"
     # 直接运行二进制，不重定向输出（程序输出将显示在终端）

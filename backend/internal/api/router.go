@@ -5,6 +5,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,21 +25,32 @@ type handler struct {
 }
 
 func NewRouter(staticFS fs.FS, controller *service.Controller, store *service.Store, auth *AuthManager) *gin.Engine {
+	logrus.Info("[路由] 开始初始化路由器")
+
+	if staticFS == nil {
+		logrus.Warn("[路由] 静态文件系统为空，将不提供前端页面")
+	}
+
 	h := &handler{
 		controller: controller,
 		store:      store,
 		auth:       auth,
 		upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool { return true },
+			ReadBufferSize:  1024,
+			WriteBufferSize: 1024,
+			CheckOrigin: func(r *http.Request) bool {
+				return true
+			},
 		},
 	}
 
 	router := gin.Default()
 
 	var indexData []byte
+
 	if staticFS != nil {
 		if sub, err := fs.Sub(staticFS, "assets"); err == nil {
-			router.StaticFS("/assets", http.FS(sub))
+			router.StaticFS("/app/FanControlServer/assets", http.FS(sub))
 		} else {
 			logrus.Warn("assets directory not found in embedded filesystem, static assets will not be served")
 		}
@@ -49,12 +61,12 @@ func NewRouter(staticFS fs.FS, controller *service.Controller, store *service.St
 			panic("无法读取 index.html: " + err.Error())
 		}
 
-		router.GET("/", func(c *gin.Context) {
+		router.GET("/app/FanControlServer/", func(c *gin.Context) {
 			c.Data(http.StatusOK, "text/html; charset=utf-8", indexData)
 		})
 	}
 
-	authGroup := router.Group("/api/auth")
+	authGroup := router.Group("/app/FanControlServer/api/auth")
 	{
 		authGroup.GET("/status", h.authStatus)
 		authGroup.GET("/setup", h.authSetupGet)
@@ -62,29 +74,44 @@ func NewRouter(staticFS fs.FS, controller *service.Controller, store *service.St
 		authGroup.POST("/reset", h.authReset)
 	}
 
-	apiGroup := router.Group("/api", auth.Middleware())
+	// 读接口：网关模式下所有登录用户都可访问（网关已鉴权）
+	apiRead := router.Group("/app/FanControlServer/api")
 	{
-		apiGroup.GET("/device/info", h.deviceInfo)
-		apiGroup.GET("/device/scan", h.deviceScan)
-		apiGroup.GET("/fan/config", h.fanConfig)
-		apiGroup.POST("/fan/config", h.saveFanConfig)
-		apiGroup.POST("/fan/set", h.setFanPWM)
-		apiGroup.POST("/fan/mode", h.setFanMode)
-		apiGroup.POST("/fan/source", h.setFanSource)
-		apiGroup.POST("/fan/curve", h.setFanCurve)
-		apiGroup.POST("/fan/remove", h.removeFan)
-		apiGroup.POST("/global/config", h.setGlobalConfig)
-		apiGroup.GET("/ws", h.ws)
+		apiRead.GET("/device/info", h.deviceInfo)
+		apiRead.GET("/device/scan", h.deviceScan)
+		apiRead.GET("/fan/config", h.fanConfig)
+		apiRead.GET("/ws", h.ws)
+	}
+
+	// 写接口：网关模式下仅管理员可访问
+	apiWrite := router.Group("/app/FanControlServer/api", auth.Middleware())
+	if h.auth.GatewayMode() {
+		apiWrite.Use(RequireAdminMiddleware())
+	}
+	{
+		apiWrite.POST("/fan/config", h.saveFanConfig)
+		apiWrite.POST("/fan/set", h.setFanPWM)
+		apiWrite.POST("/fan/mode", h.setFanMode)
+		apiWrite.POST("/fan/source", h.setFanSource)
+		apiWrite.POST("/fan/curve", h.setFanCurve)
+		apiWrite.POST("/fan/remove", h.removeFan)
+		apiWrite.POST("/global/config", h.setGlobalConfig)
 	}
 
 	if staticFS != nil {
 		router.NoRoute(func(c *gin.Context) {
 			path := c.Request.URL.Path
-			if strings.HasPrefix(path, "/api") {
+			// 防目录穿越
+			clean := filepath.Clean(path)
+			if strings.Contains(clean, "..") {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "非法路径"})
+				return
+			}
+			if strings.HasPrefix(path, "/app/FanControlServer/api") {
 				c.JSON(http.StatusNotFound, gin.H{"error": "未找到接口"})
 				return
 			}
-			f, err := staticFS.Open(strings.TrimPrefix(path, "/"))
+			f, err := staticFS.Open(strings.TrimPrefix(path, "/app/FanControlServer/"))
 			if err == nil {
 				defer func(f fs.File) {
 					_ = f.Close()
@@ -241,7 +268,14 @@ func (h *handler) ws(c *gin.Context) {
 		logrus.Warnf("[WebSocket] 升级失败 (来自 %s)：%v", clientIP, err)
 		return
 	}
-	logrus.Infof("[WebSocket] 客户端已连接：%s", clientIP)
+	// 网关模式下记录用户信息
+	if h.auth.GatewayMode() {
+		if user := GetGatewayUser(c); user != nil {
+			logrus.Infof("[WebSocket] 用户 UID=%s 已连接：%s", user.UID, clientIP)
+		}
+	} else {
+		logrus.Infof("[WebSocket] 客户端已连接：%s", clientIP)
+	}
 	sub := h.controller.Subscribe()
 	defer h.controller.Unsubscribe(sub)
 	defer func() {

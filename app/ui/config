@@ -2,11 +2,13 @@
     ".url": {
         "FanControlServer.Application": {
             "title": "Fan Control Server",
+            "desc": "智能风扇与温度管理",
             "icon": "images/icon_{0}.png",
             "type": "url",
             "protocol": "",
-            "port": "${service_port}",
-            "url": "/",
+            "gatewaySocket": "target/app.sock",
+            "gatewayPrefix": "/app/FanControlServer",
+            "url": "/app/FanControlServer",
             "allUsers": false
         }
     }
