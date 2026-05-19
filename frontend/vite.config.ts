@@ -1,6 +1,9 @@
 import {defineConfig} from "vite";
 
+const gatewayBase = "/app/FanControlServer/";
+
 export default defineConfig({
+    base: gatewayBase,
     build: {
         outDir: "../backend/web",
         emptyOutDir: true
@@ -9,22 +12,24 @@ export default defineConfig({
         port: 5173,
         host: true,
         proxy: {
-            "/api": {
-                target: "http://127.0.0.1:19528",
+            [gatewayBase + "api"]: {
+                target: "http://127.0.0.1:19527",
                 changeOrigin: true,
-                ws: true
-            }
-        }
+                ws: true,
+                rewrite: (path) => path.replace(new RegExp(`^${gatewayBase}`), "/"),
+            },
+        },
     },
     preview: {
         port: 4173,
         host: true,
         proxy: {
-            "/api": {
-                target: "http://127.0.0.1:19528",
+            [gatewayBase + "api"]: {
+                target: "http://127.0.0.1:19527",
                 changeOrigin: true,
-                ws: true
-            }
-        }
-    }
+                ws: true,
+                rewrite: (path) => path.replace(new RegExp(`^${gatewayBase}`), "/"),
+            },
+        },
+    },
 });
