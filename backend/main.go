@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -46,6 +47,13 @@ func listenAddr() string {
 	port := os.Getenv("service_port")
 	if port == "" {
 		port = "19527"
+	} else {
+		// 验证端口合法性：必须是 1-65535 之间的整数
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			logrus.Warnf("[主程序] 环境变量 service_port=%s 无效，使用默认端口 19527", port)
+			port = "19527"
+		}
 	}
 	return bind + ":" + port
 }

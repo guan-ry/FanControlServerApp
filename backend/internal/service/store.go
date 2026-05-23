@@ -69,6 +69,25 @@ func (s *Store) Save(cfg model.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// 当 CPUSensor/GPUSensor 被移除或变更时，还原相关风扇的温度源为 "cpu"/"gpu"
+	// 后续 normalizeConfig 会根据新的传感器值重新映射
+	if s.cfg.Global.CPUSensor != cfg.Global.CPUSensor && s.cfg.Global.CPUSensor != "" {
+		oldCPUSrc := "sensor:" + s.cfg.Global.CPUSensor
+		for i := range cfg.Fans {
+			if cfg.Fans[i].Source == oldCPUSrc {
+				cfg.Fans[i].Source = "cpu"
+			}
+		}
+	}
+	if s.cfg.Global.GPUSensor != cfg.Global.GPUSensor && s.cfg.Global.GPUSensor != "" {
+		oldGPUSrc := "sensor:" + s.cfg.Global.GPUSensor
+		for i := range cfg.Fans {
+			if cfg.Fans[i].Source == oldGPUSrc {
+				cfg.Fans[i].Source = "gpu"
+			}
+		}
+	}
+
 	normalizeConfig(&cfg)
 	s.cfg = cfg
 	if err := s.saveLocked(); err != nil {
@@ -89,7 +108,17 @@ func (s *Store) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, raw, 0o600)
+	// 原子写入：先写临时文件，再 rename，避免中途崩溃导致配置损坏
+	tmpPath := s.path + ".tmp"
+	if err = os.WriteFile(tmpPath, raw, 0o600); err != nil {
+		return err
+	}
+	if err = os.Rename(tmpPath, s.path); err != nil {
+		// rename 失败时尝试删除临时文件
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
 }
 
 func defaultConfig() model.Config {
@@ -228,6 +257,7 @@ func normalizeConfig(cfg *model.Config) {
 	sort.Slice(cfg.Fans, func(i, j int) bool { return cfg.Fans[i].ID < cfg.Fans[j].ID })
 
 	// 每个风扇的独立规范化
+	var cpuMapped, gpuMapped int
 	for i := range cfg.Fans {
 		if cfg.Fans[i].Mode == "" {
 			cfg.Fans[i].Mode = model.FanModeCurve
@@ -235,11 +265,27 @@ func normalizeConfig(cfg *model.Config) {
 		if cfg.Fans[i].Source == "" {
 			cfg.Fans[i].Source = "cpu"
 		}
+		// 当 CPUSensor/GPUSensor 已设置时，将风扇的 "cpu"/"gpu" 温度源
+		// 映射到具体传感器 ID，使温度源更明确且前端可见
+		if cfg.Global.CPUSensor != "" && cfg.Fans[i].Source == "cpu" {
+			cfg.Fans[i].Source = "sensor:" + cfg.Global.CPUSensor
+			cpuMapped++
+		}
+		if cfg.Global.GPUSensor != "" && cfg.Fans[i].Source == "gpu" {
+			cfg.Fans[i].Source = "sensor:" + cfg.Global.GPUSensor
+			gpuMapped++
+		}
 		// 曲线点排序
 		sort.Slice(cfg.Fans[i].Curve, func(a, b int) bool {
 			return cfg.Fans[i].Curve[a].Temp < cfg.Fans[i].Curve[b].Temp
 		})
 		normalizeFanOverrides(&cfg.Fans[i])
+	}
+	if cpuMapped > 0 {
+		logrus.Infof("[配置] %d 个风扇的 CPU 温度源已映射到传感器 %s", cpuMapped, cfg.Global.CPUSensor)
+	}
+	if gpuMapped > 0 {
+		logrus.Infof("[配置] %d 个风扇的 GPU 温度源已映射到传感器 %s", gpuMapped, cfg.Global.GPUSensor)
 	}
 }
 

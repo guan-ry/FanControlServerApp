@@ -31,7 +31,7 @@ start_process() {
     fi
 
     # 确保 target 目录存在（用于 Unix Socket）
-    mkdir -p "${TRIM_PKGVAR}/target"
+    mkdir -p "${TRIM_APPDEST}/target"
 
     log_msg "Starting process ..."
     log_msg "Server binary path: ${SERVER_BIN}"

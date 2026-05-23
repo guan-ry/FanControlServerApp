@@ -142,17 +142,23 @@ func (c *Controller) loop() {
 
 func (c *Controller) collectAndApply(cfg model.Config) model.Telemetry {
 	now := time.Now()
-	cpuTemp, _ := c.system.CPUTemp()
+	// 先采集传感器列表，避免 readCPUTemp/readGPUTemp 重复调用 readSensors
+	sensors := c.readSensors()
+	cpuTemp := c.readCPUTemp(cfg.Global)
 	cpuUsage, _ := c.system.CPUUsage()
 	memUsage, memTotal, _ := c.system.MemInfo()
-	gpuTemp, _ := c.gpu.Temp()
+	gpuTemp := c.readGPUTemp(cfg.Global)
 	logrus.Debugf("[温度] CPU=%.1f°C GPU=%.1f°C", ptrOrNil(cpuTemp), ptrOrNil(gpuTemp))
 
 	// 计算系统运行时间（秒）
 	uptime := int64(now.Sub(c.startTime).Seconds())
 
 	disks := c.readDisks()
-	sensors := c.readSensors()
+
+	// 生成传感器来源标签
+	cpuSensorLabel := resolveSensorLabel(cfg.Global.CPUSensor, sensors, "CPU")
+	gpuSensorLabel := resolveSensorLabel(cfg.Global.GPUSensor, sensors, "GPU")
+
 	fans := make([]model.FanRuntime, 0, len(cfg.Fans))
 	for _, fan := range cfg.Fans {
 		target, _ := c.calculateTargetPWM(fan, cfg.Global, cpuTemp, gpuTemp, disks, sensors)
@@ -187,16 +193,18 @@ func (c *Controller) collectAndApply(cfg model.Config) model.Telemetry {
 	}
 
 	return model.Telemetry{
-		CPUTemp:   cpuTemp,
-		CPUUsage:  round(cpuUsage),
-		MemUsage:  round(memUsage),
-		MemTotal:  memTotal,
-		GPUTemp:   gpuTemp,
-		Uptime:    uptime,
-		Disks:     disks,
-		Fans:      fans,
-		Sensors:   sensors,
-		Timestamp: now,
+		CPUTemp:        cpuTemp,
+		CPUUsage:       round(cpuUsage),
+		MemUsage:       round(memUsage),
+		MemTotal:       memTotal,
+		GPUTemp:        gpuTemp,
+		CPUSensorLabel: cpuSensorLabel,
+		GPUSensorLabel: gpuSensorLabel,
+		Uptime:         uptime,
+		Disks:          disks,
+		Fans:           fans,
+		Sensors:        sensors,
+		Timestamp:      now,
 	}
 }
 
@@ -223,6 +231,52 @@ func (c *Controller) readSensors() []model.SensorReading {
 		})
 	}
 	return out
+}
+
+// readCPUTemp 读取 CPU 温度：优先使用自定义传感器，否则使用默认逻辑。
+func (c *Controller) readCPUTemp(global model.GlobalConfig) *float64 {
+	if global.CPUSensor != "" {
+		c.mu.RLock()
+		chans := c.sensorChans // 加锁保护
+		c.mu.RUnlock()
+		for _, ch := range chans {
+			if ch.ID == global.CPUSensor {
+				temp, err := c.hwmon.ReadTemp(ch.Path)
+				if err == nil {
+					logrus.Debugf("[温度] 使用自定义 CPU 传感器 %s: %.1f°C", global.CPUSensor, *temp)
+					return temp
+				}
+				logrus.Warnf("[温度] 读取自定义 CPU 传感器 %s 失败: %v", global.CPUSensor, err)
+				break
+			}
+		}
+		logrus.Warnf("[温度] 未找到自定义 CPU 传感器 %s 的路径，回退到默认方式", global.CPUSensor)
+	}
+	temp, _ := c.system.CPUTemp()
+	return temp
+}
+
+// readGPUTemp 读取 GPU 温度：优先使用自定义传感器，否则使用默认逻辑。
+func (c *Controller) readGPUTemp(global model.GlobalConfig) *float64 {
+	if global.GPUSensor != "" {
+		c.mu.RLock()
+		chans := c.sensorChans
+		c.mu.RUnlock()
+		for _, ch := range chans {
+			if ch.ID == global.GPUSensor {
+				temp, err := c.hwmon.ReadTemp(ch.Path)
+				if err == nil {
+					logrus.Debugf("[温度] 使用自定义 GPU 传感器 %s: %.1f°C", global.GPUSensor, *temp)
+					return temp
+				}
+				logrus.Warnf("[温度] 读取自定义 GPU 传感器 %s 失败: %v", global.GPUSensor, err)
+				break
+			}
+		}
+		logrus.Warnf("[温度] 未找到自定义 GPU 传感器 %s 的路径，回退到默认方式", global.GPUSensor)
+	}
+	temp, _ := c.gpu.Temp()
+	return temp
 }
 
 func (c *Controller) readDisks() model.DiskPayload {
@@ -465,8 +519,10 @@ func (c *Controller) resolveSourceTemp(
 func (c *Controller) applyPWM(fan model.FanConfig, target int, deadzone int) int {
 	target = clampPWM(target)
 
-	// 获取真实当前 PWM（从缓存或硬件读取）
+	// 获取真实当前 PWM（从缓存或硬件读取，加锁避免与 RemoveFan 竞态）
+	c.mu.Lock()
 	current, ok := c.lastPWM[fan.ID]
+	c.mu.Unlock()
 	if !ok {
 		// 首次：从硬件读取
 		if val, err := c.hwmon.ReadPWM(fan.PWMPath); err == nil {
@@ -474,7 +530,9 @@ func (c *Controller) applyPWM(fan model.FanConfig, target int, deadzone int) int
 		} else {
 			current = 0 // 读取失败时保守设为0
 		}
+		c.mu.Lock()
 		c.lastPWM[fan.ID] = current
+		c.mu.Unlock()
 	}
 
 	if deadzone < 0 {
@@ -491,7 +549,9 @@ func (c *Controller) applyPWM(fan model.FanConfig, target int, deadzone int) int
 	}
 
 	// 更新缓存
+	c.mu.Lock()
 	c.lastPWM[fan.ID] = target
+	c.mu.Unlock()
 	logrus.Infof("[PWM] 风扇 %s: PWM %d(%d%%) → %d(%d%%)", fan.Name, current, current*100/255, target, target*100/255)
 	return target
 }
@@ -792,4 +852,24 @@ func ptrOrNil(v *float64) float64 {
 		return 0
 	}
 	return *v
+}
+
+// resolveSensorLabel 生成温度来源的显示标签。
+func resolveSensorLabel(sensorID string, sensors []model.SensorReading, fallback string) string {
+	if sensorID == "" {
+		return fallback
+	}
+	for _, s := range sensors {
+		if s.ID == sensorID {
+			label := s.Label
+			if label == "" {
+				label = s.Key
+			}
+			if s.Device != "" {
+				return fmt.Sprintf("%s\u00b7%s", s.Device, label)
+			}
+			return label
+		}
+	}
+	return fallback
 }

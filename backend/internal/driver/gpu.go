@@ -1,9 +1,11 @@
 package driver
 
 import (
+	"context"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type GPUDriver struct{}
@@ -13,7 +15,9 @@ func NewGPUDriver() *GPUDriver {
 }
 
 func (d *GPUDriver) Temp() (*float64, error) {
-	cmd := exec.Command("nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err

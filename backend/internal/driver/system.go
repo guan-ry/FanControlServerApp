@@ -81,36 +81,92 @@ func (d *SystemDriver) MemInfo() (usage float64, totalGB *float64, err error) {
 }
 
 func (d *SystemDriver) CPUTemp() (*float64, error) {
-	paths, err := filepath.Glob("/sys/class/hwmon/hwmon*/temp*_input")
+	// 1. 获取所有 hwmon 目录
+	dirs, err := filepath.Glob("/sys/class/hwmon/hwmon*")
 	if err != nil {
 		return nil, err
 	}
+
 	var best *float64
-	for _, p := range paths {
-		labelPath := strings.TrimSuffix(p, "_input") + "_label"
-		label := ""
-		if raw, err := os.ReadFile(labelPath); err == nil {
-			label = strings.ToLower(strings.TrimSpace(string(raw)))
-		}
-		if label != "" && !strings.Contains(label, "package") && !strings.Contains(label, "cpu") && !strings.Contains(label, "tdie") {
-			continue
-		}
-		raw, err := os.ReadFile(p)
+
+	for _, dir := range dirs {
+		// 动态检测驱动名称，防止误读硬盘/主板温度
+		namePath := filepath.Join(dir, "name")
+		nameRaw, err := os.ReadFile(namePath)
 		if err != nil {
 			continue
 		}
-		value, err := strconv.ParseFloat(strings.TrimSpace(string(raw)), 64)
-		if err != nil {
-			continue
-		}
-		temp := value / 1000.0
-		if temp <= 0 || temp > 120 {
-			continue
-		}
-		if best == nil || temp > *best {
-			v := temp
-			best = &v
+		driverName := strings.TrimSpace(string(nameRaw))
+
+		// 明确是否为 Intel 或 AMD 的官方 CPU 温度驱动
+		isCPU := driverName == "coretemp" || driverName == "k10temp" || driverName == "zenpower"
+
+		// 遍历当前目录下的所有温度通道
+		inputs, _ := filepath.Glob(filepath.Join(dir, "temp*_input"))
+		for _, p := range inputs {
+			// 获取输入文件的编号，例如从 "temp1_input" 提取出 "temp1"
+			baseName := filepath.Base(p)                      // "temp1_input"
+			currentChannel := strings.Split(baseName, "_")[0] // "temp1"
+
+			labelPath := filepath.Join(dir, currentChannel+"_label")
+			label := ""
+			if raw, err := os.ReadFile(labelPath); err == nil {
+				label = strings.ToLower(strings.TrimSpace(string(raw)))
+			}
+
+			// --- 核心修复：精准温度过滤逻辑 ---
+			if isCPU {
+				// 如果是原生 CPU 驱动，但有标签，我们只想要 Package/总温，过滤掉单个独立核心
+				// 增加了 tctl 关键字支持 AMD
+				if label != "" && !strings.Contains(label, "package") && !strings.Contains(label, "cpu") && !strings.Contains(label, "tdie") && !strings.Contains(label, "tctl") {
+					continue
+				}
+				// 如果 label 为空，默认信任 temp1_input (通常是主通道)，其余没有 label 的副通道略过
+				if label == "" && currentChannel != "temp1" {
+					continue
+				}
+			} else {
+				// 如果不是原生 CPU 驱动（如主板 ACPI），只有当标签明确写了 "cpu" 时才允许采用
+				// 这彻底杜绝了无标签的硬盘/主板温度参与比大小，解决了“温度与其他软件不一致”的问题
+				if label == "" || !strings.Contains(label, "cpu") {
+					continue
+				}
+			}
+
+			// 读取温度值
+			raw, err := os.ReadFile(p)
+			if err != nil {
+				continue
+			}
+			value, err := strconv.ParseFloat(strings.TrimSpace(string(raw)), 64)
+			if err != nil {
+				continue
+			}
+			temp := value / 1000.0
+			if temp <= 0 || temp > 120 {
+				continue
+			}
+
+			// 记录最高温度 (通常 Package/Tctl 代表整颗 CPU 的最高温状态)
+			if best == nil || temp > *best {
+				v := temp
+				best = &v
+			}
 		}
 	}
+
+	// 2. 兜底逻辑：如果 hwmon 没找到任何 CPU 温度（常见于虚拟机、ARM 设备或老旧服务器）
+	// 尝试读取标准的 thermal_zone0
+	if best == nil {
+		if raw, err := os.ReadFile("/sys/class/thermal/thermal_zone0/temp"); err == nil {
+			if value, err := strconv.ParseFloat(strings.TrimSpace(string(raw)), 64); err == nil {
+				temp := value / 1000.0
+				if temp > 0 && temp <= 120 {
+					best = &temp
+				}
+			}
+		}
+	}
+
 	return best, nil
 }

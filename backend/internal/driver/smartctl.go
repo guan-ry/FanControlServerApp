@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"fancontrolserver/internal/model"
 )
@@ -76,7 +78,9 @@ func (d *SmartCtlDriver) ReadDisk(name string) model.DiskInfo {
 // checkStandby 使用 hdparm -C 检查硬盘是否休眠
 // 输出 standby 表示休眠，active/idle 表示活动
 func (d *SmartCtlDriver) checkStandby(dev string) bool {
-	cmd := exec.Command("hdparm", "-C", dev)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "hdparm", "-C", dev)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return false
@@ -85,7 +89,9 @@ func (d *SmartCtlDriver) checkStandby(dev string) bool {
 }
 
 func (d *SmartCtlDriver) readSATATemp(dev string) *float64 {
-	cmd := exec.Command("smartctl", "-a", dev)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "smartctl", "-a", dev)
 	out, err := cmd.CombinedOutput()
 	if err != nil && len(out) == 0 {
 		return nil
@@ -94,7 +100,9 @@ func (d *SmartCtlDriver) readSATATemp(dev string) *float64 {
 }
 
 func (d *SmartCtlDriver) readNVMeTemp(dev string) *float64 {
-	cmd := exec.Command("smartctl", "-a", dev)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "smartctl", "-a", dev)
 	out, err := cmd.CombinedOutput()
 	if err != nil && len(out) == 0 {
 		return nil

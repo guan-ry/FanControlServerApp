@@ -35,6 +35,8 @@ export interface FanConfig {
 }
 
 export interface GlobalConfig {
+    cpu_sensor?: string;
+    gpu_sensor?: string;
     pwm_deadzone: number;
     update_interval_ms: number;
     emergency_temp: number;
@@ -95,6 +97,8 @@ export interface Telemetry {
     mem_usage: number;
     mem_total?: number;  // 内存总量（GB）
     gpu_temp?: number;
+    cpu_sensor_label?: string;
+    gpu_sensor_label?: string;
     disks: {
         avg_temp?: number;
         details: DiskInfo[];

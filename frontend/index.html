@@ -502,6 +502,61 @@
             </div>
         </div>
 
+        <!-- CPU/GPU 传感器映射（折叠区） -->
+        <div class="pt-4 border-t border-slate-700/50">
+            <button type="button" id="cpu-gpu-sensor-toggle"
+                    class="flex items-center gap-2 text-sm font-bold text-slate-300 hover:text-white transition-colors mb-4">
+                <iconify-icon id="cpu-gpu-sensor-chevron" class="text-lg transition-transform"
+                              icon="mdi:chevron-right"></iconify-icon>
+                <iconify-icon class="text-sky-400" icon="mdi:chip"></iconify-icon>
+                CPU/GPU 温度传感器映射
+            </button>
+            <div id="cpu-gpu-sensor-panel" class="hidden">
+                <p class="text-xs text-slate-500 mb-3">
+                    将特定 hwmon 传感器指定为 CPU 或 GPU 温度源，覆盖默认的读取逻辑。适用于非标准硬件或多 GPU 环境。</p>
+                
+                <!-- CPU 传感器选择 -->
+                <div class="mb-4">
+                    <label class="block text-xs font-bold text-slate-300 mb-2 flex items-center gap-2">
+                        <iconify-icon class="text-sky-400" icon="mdi:cpu-64-bit"></iconify-icon>
+                        CPU 温度传感器
+                    </label>
+                    <div class="relative">
+                        <button type="button" id="cpu-sensor-btn"
+                                class="w-full flex items-center justify-between bg-slate-800 border border-slate-600 rounded px-3 py-2 text-left hover:border-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500">
+                            <span id="cpu-sensor-display" class="truncate text-slate-200 text-sm">-- 使用默认检测 --</span>
+                            <iconify-icon class="text-slate-400 ml-2 flex-shrink-0 transition-transform"
+                                          id="cpu-sensor-chevron" icon="mdi:chevron-down"></iconify-icon>
+                        </button>
+                        <div id="cpu-sensor-menu"
+                             class="hidden absolute top-full left-0 right-0 mt-1 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl shadow-black/40 max-h-72 overflow-y-auto"></div>
+                        <input type="hidden" id="cpu-sensor-value"/>
+                    </div>
+                    <p class="text-[10px] text-slate-500 mt-1">留空则使用系统自动检测的 CPU 温度</p>
+                </div>
+
+                <!-- GPU 传感器选择 -->
+                <div>
+                    <label class="block text-xs font-bold text-slate-300 mb-2 flex items-center gap-2">
+                        <iconify-icon class="text-orange-400" icon="mdi:nvidia"></iconify-icon>
+                        GPU 温度传感器
+                    </label>
+                    <div class="relative">
+                        <button type="button" id="gpu-sensor-btn"
+                                class="w-full flex items-center justify-between bg-slate-800 border border-slate-600 rounded px-3 py-2 text-left hover:border-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500">
+                            <span id="gpu-sensor-display" class="truncate text-slate-200 text-sm">-- 使用默认检测 --</span>
+                            <iconify-icon class="text-slate-400 ml-2 flex-shrink-0 transition-transform"
+                                          id="gpu-sensor-chevron" icon="mdi:chevron-down"></iconify-icon>
+                        </button>
+                        <div id="gpu-sensor-menu"
+                             class="hidden absolute top-full left-0 right-0 mt-1 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl shadow-black/40 max-h-72 overflow-y-auto"></div>
+                        <input type="hidden" id="gpu-sensor-value"/>
+                    </div>
+                    <p class="text-[10px] text-slate-500 mt-1">留空则使用 nvidia-smi 获取 GPU 温度</p>
+                </div>
+            </div>
+        </div>
+
         <div class="mt-10 pt-6 border-t border-slate-700/50 flex flex-col md:flex-row justify-between items-center gap-4">
             <div class="text-[10px] text-slate-500 flex items-center gap-4"><span class="flex items-center gap-1"><iconify-icon
                     class="text-green-500" icon="mdi:check-circle"></iconify-icon> FanControlServer</span></div>
