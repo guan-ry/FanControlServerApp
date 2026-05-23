@@ -2,6 +2,7 @@
 package logging
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 
@@ -78,14 +79,15 @@ func InitWithConfig(cfg Config) {
 		logrus.Warnf("[日志] 无法创建日志目录 %s: %v", cfg.Dir, err)
 		logrus.SetOutput(os.Stderr)
 	} else {
-		// 设置文件输出（带轮转）
-		logrus.SetOutput(&lumberjack.Logger{
+		// 设置文件输出（带轮转），同时输出到 stderr 以便控制台可见
+		fileWriter := &lumberjack.Logger{
 			Filename:   logPath,
 			MaxSize:    cfg.MaxSizeMB,
 			MaxAge:     cfg.MaxAgeDays,
 			MaxBackups: cfg.MaxBackups,
 			Compress:   true,
-		})
+		}
+		logrus.SetOutput(io.MultiWriter(os.Stderr, fileWriter))
 		logrus.Infof("[日志] 日志文件: %s", logPath)
 	}
 

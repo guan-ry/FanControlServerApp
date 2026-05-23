@@ -482,9 +482,13 @@ function collectSourceGroups(mode: "simple" | "advanced"): SourceGroup[] {
     const aliases = config.global.sensor_aliases ?? {};
     const sensors = allSensors.filter(s => !hidden.has(s.id));
     if (mode === "simple") {
+        const cpuSensor = config.global.cpu_sensor;
+        const gpuSensor = config.global.gpu_sensor;
+        const cpuLabel = cpuSensor ? `CPU · ${getSensorDisplayName(cpuSensor)}` : "CPU";
+        const gpuLabel = gpuSensor ? `GPU · ${getSensorDisplayName(gpuSensor)}` : "GPU";
         const items: SourceItem[] = [
-            {v: "cpu", name: "CPU"},
-            {v: "gpu", name: "GPU"},
+            {v: cpuSensor ? `sensor:${cpuSensor}` : "cpu", name: cpuLabel},
+            {v: gpuSensor ? `sensor:${gpuSensor}` : "gpu", name: gpuLabel},
         ];
         disks.forEach(d => items.push({v: `disk:${d.name}`, name: `硬盘 ${d.name}`, sleep: d.status === "sleep"}));
         items.push({v: "disk_avg", name: "硬盘平均"});
@@ -621,10 +625,25 @@ function setFallbackSourceValue(value: string) {
     }
 }
 
+/** 获取传感器 ID 的人类可读短名称 */
+function getSensorDisplayName(sensorId: string): string {
+    const sensors = telemetry?.sensors ?? [];
+    const aliases = config.global.sensor_aliases ?? {};
+    const s = sensors.find(x => x.id === sensorId);
+    if (!s) return sensorId;
+    const name = aliases[s.id] || s.label || s.key;
+    return s.device ? `${s.device}·${name}` : name;
+}
+
 function getSourceLabel(source: string): string {
     const disks = telemetry?.disks.details ?? [];
     const sensors = telemetry?.sensors ?? [];
     const aliases = config.global.sensor_aliases ?? {};
+    const cpuSensor = config.global.cpu_sensor;
+    const gpuSensor = config.global.gpu_sensor;
+    // 当 source 是由 CPUSensor/GPUSensor 映射生成的传感器源时，显示为 CPU/GPU
+    if (cpuSensor && source === `sensor:${cpuSensor}`) return "CPU";
+    if (gpuSensor && source === `sensor:${gpuSensor}`) return "GPU";
     if (source === "cpu") return "CPU";
     if (source === "gpu") return "GPU";
     if (source === "disk_avg") return "硬盘平均";
@@ -1006,6 +1025,21 @@ function fillGlobalForm() {
     ($("g-stop-pwm") as HTMLInputElement).value = String(g.stop_pwm);
     updateStopPWMRow();
     updateGlobalTuningRowVisibility();
+    
+    // 填充 CPU/GPU 传感器映射
+    const cpuSensorValue = document.getElementById("cpu-sensor-value") as HTMLInputElement | null;
+    if (cpuSensorValue) cpuSensorValue.value = g.cpu_sensor || "";
+    const cpuSensorDisplay = document.getElementById("cpu-sensor-display");
+    if (cpuSensorDisplay) {
+        cpuSensorDisplay.textContent = g.cpu_sensor ? getSourceLabel(g.cpu_sensor) : "-- 使用默认检测 --";
+    }
+    
+    const gpuSensorValue = document.getElementById("gpu-sensor-value") as HTMLInputElement | null;
+    if (gpuSensorValue) gpuSensorValue.value = g.gpu_sensor || "";
+    const gpuSensorDisplay = document.getElementById("gpu-sensor-display");
+    if (gpuSensorDisplay) {
+        gpuSensorDisplay.textContent = g.gpu_sensor ? getSourceLabel(g.gpu_sensor) : "-- 使用默认检测 --";
+    }
 }
 
 function renderSensorMgrTable() {
@@ -1074,6 +1108,99 @@ function updateSensorMgrTemps() {
     });
 }
 
+// 渲染 CPU/GPU 传感器选择菜单
+function renderCPUGPUSensorMenu(type: "cpu" | "gpu"): string {
+    const sensors = telemetry?.sensors ?? [];
+    const current = type === "cpu" ? (config.global.cpu_sensor || "") : (config.global.gpu_sensor || "");
+    const items = sensors.filter(s => !config.global.sensor_hidden?.includes(s.id));
+    
+    let html = `
+<div class="px-3 py-2 text-xs text-slate-400 border-b border-slate-700/50">
+    选择一个 hwmon 传感器作为${type === "cpu" ? "CPU" : "GPU"}温度源
+</div>
+<button type="button" data-sensor-value=""
+        class="w-full flex items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-slate-700/70 ${!current ? "bg-slate-700/40" : ""}">
+    <span class="${!current ? "text-sky-300 font-medium" : "text-slate-200"} truncate">使用默认检测</span>
+    ${!current ? '<iconify-icon class="text-sky-400 ml-2 flex-shrink-0" icon="mdi:check"></iconify-icon>' : ""}
+</button>`;
+    
+    for (const s of items) {
+        const isSelected = s.id === current;
+        const name = config.global.sensor_aliases?.[s.id] || s.label || s.key;
+        const chipLabel = s.device ? `${s.chip}·${s.device}` : s.chip;
+        const displayName = `${chipLabel}·${name}`;
+        const tempText = s.temp != null ? `${s.temp.toFixed(1)}°C` : "—";
+        
+        html += `
+<button type="button" data-sensor-value="${esc(s.id)}"
+        class="w-full flex items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-slate-700/70 ${isSelected ? "bg-slate-700/40" : ""}">
+    <span class="${isSelected ? "text-sky-300 font-medium" : "text-slate-200"} truncate">${esc(displayName)}</span>
+    <span class="flex items-center gap-1 flex-shrink-0">
+        <span class="${isSelected ? "text-sky-400" : "text-slate-400"} font-mono tabular-nums text-xs">${esc(tempText)}</span>
+        ${isSelected ? '<iconify-icon class="text-sky-400 ml-2 flex-shrink-0" icon="mdi:check"></iconify-icon>' : ""}
+    </span>
+</button>`;
+    }
+    
+    return html;
+}
+
+// 打开 CPU 传感器菜单
+function openCPUSensorMenu() {
+    const menu = document.getElementById("cpu-sensor-menu");
+    const chevron = document.getElementById("cpu-sensor-chevron");
+    if (!menu) return;
+    menu.innerHTML = renderCPUGPUSensorMenu("cpu");
+    menu.classList.remove("hidden");
+    if (chevron) chevron.style.transform = "rotate(180deg)";
+}
+
+// 关闭 CPU 传感器菜单
+function closeCPUSensorMenu() {
+    const menu = document.getElementById("cpu-sensor-menu");
+    const chevron = document.getElementById("cpu-sensor-chevron");
+    if (menu) menu.classList.add("hidden");
+    if (chevron) chevron.style.transform = "";
+}
+
+// 打开 GPU 传感器菜单
+function openGPUSensorMenu() {
+    const menu = document.getElementById("gpu-sensor-menu");
+    const chevron = document.getElementById("gpu-sensor-chevron");
+    if (!menu) return;
+    menu.innerHTML = renderCPUGPUSensorMenu("gpu");
+    menu.classList.remove("hidden");
+    if (chevron) chevron.style.transform = "rotate(180deg)";
+}
+
+// 关闭 GPU 传感器菜单
+function closeGPUSensorMenu() {
+    const menu = document.getElementById("gpu-sensor-menu");
+    const chevron = document.getElementById("gpu-sensor-chevron");
+    if (menu) menu.classList.add("hidden");
+    if (chevron) chevron.style.transform = "";
+}
+
+// 设置 CPU 传感器值
+function setCPUSensor(value: string) {
+    const input = document.getElementById("cpu-sensor-value") as HTMLInputElement | null;
+    if (input) input.value = value;
+    const display = document.getElementById("cpu-sensor-display");
+    if (display) {
+        display.textContent = value ? getSourceLabel(value) : "-- 使用默认检测 --";
+    }
+}
+
+// 设置 GPU 传感器值
+function setGPUSensor(value: string) {
+    const input = document.getElementById("gpu-sensor-value") as HTMLInputElement | null;
+    if (input) input.value = value;
+    const display = document.getElementById("gpu-sensor-display");
+    if (display) {
+        display.textContent = value ? getSourceLabel(value) : "-- 使用默认检测 --";
+    }
+}
+
 function bindCollapsible(toggleId: string, panelId: string, chevronId: string, onOpen?: () => void) {
     const toggle = document.getElementById(toggleId);
     const panel = document.getElementById(panelId);
@@ -1085,6 +1212,61 @@ function bindCollapsible(toggleId: string, panelId: string, chevronId: string, o
         chevron.style.transform = wasHidden ? "rotate(90deg)" : "";
         if (wasHidden && onOpen) onOpen();
     });
+}
+
+// 绑定 CPU/GPU 传感器下拉菜单事件
+function bindCPUGPUSensorMenus() {
+    // CPU 传感器按钮
+    const cpuBtn = document.getElementById("cpu-sensor-btn");
+    if (cpuBtn) {
+        cpuBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            closeGPUSensorMenu();
+            openCPUSensorMenu();
+        });
+    }
+    
+    // GPU 传感器按钮
+    const gpuBtn = document.getElementById("gpu-sensor-btn");
+    if (gpuBtn) {
+        gpuBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            closeCPUSensorMenu();
+            openGPUSensorMenu();
+        });
+    }
+    
+    // 点击外部关闭菜单
+    document.addEventListener("click", () => {
+        closeCPUSensorMenu();
+        closeGPUSensorMenu();
+    });
+    
+    // CPU 菜单项点击委托
+    const cpuMenu = document.getElementById("cpu-sensor-menu");
+    if (cpuMenu) {
+        cpuMenu.addEventListener("click", (e) => {
+            const btn = (e.target as HTMLElement).closest("button[data-sensor-value]");
+            if (btn) {
+                const value = btn.getAttribute("data-sensor-value") || "";
+                setCPUSensor(value);
+                closeCPUSensorMenu();
+            }
+        });
+    }
+    
+    // GPU 菜单项点击委托
+    const gpuMenu = document.getElementById("gpu-sensor-menu");
+    if (gpuMenu) {
+        gpuMenu.addEventListener("click", (e) => {
+            const btn = (e.target as HTMLElement).closest("button[data-sensor-value]");
+            if (btn) {
+                const value = btn.getAttribute("data-sensor-value") || "";
+                setGPUSensor(value);
+                closeGPUSensorMenu();
+            }
+        });
+    }
 }
 
 function updateStopPWMRow() {
@@ -1114,6 +1296,13 @@ function readGlobalForm(): GlobalConfig {
     const emEl = document.getElementById("g-emergency") as HTMLInputElement | null;
     const emRow = document.getElementById("g-row-emergency");
     if (emEl && emRow && !emRow.classList.contains("hidden")) out.emergency_temp = Math.max(0, Number(emEl.value) || 80);
+    
+    // 读取 CPU/GPU 传感器映射
+    const cpuSensorEl = document.getElementById("cpu-sensor-value") as HTMLInputElement | null;
+    if (cpuSensorEl) out.cpu_sensor = cpuSensorEl.value.trim() || undefined;
+    const gpuSensorEl = document.getElementById("gpu-sensor-value") as HTMLInputElement | null;
+    if (gpuSensorEl) out.gpu_sensor = gpuSensorEl.value.trim() || undefined;
+    
     return out;
 }
 
@@ -1695,11 +1884,15 @@ async function main() {
     bindFallbackSourceDropdown();
     bindCollapsible("fan-params-toggle", "fan-params-panel", "fan-params-chevron", updateGlobalTuningRowVisibility);
     bindCollapsible("sensor-mgr-toggle", "sensor-mgr-panel", "sensor-mgr-chevron", renderSensorMgrTable);
+    bindCollapsible("cpu-gpu-sensor-toggle", "cpu-gpu-sensor-panel", "cpu-gpu-sensor-chevron");
+    bindCPUGPUSensorMenus();
     initHistoryChart();
 
     await refresh();
 
     let ws: WebSocket | null = null;
+    let wsRetryDelay = 1500;   // 初始重连延迟
+    const wsMaxDelay = 30000;  // 最大重连延迟
 
     function connectWs() {
         if (ws) ws.close();
@@ -1708,6 +1901,7 @@ async function main() {
         const wsPath = `${base}/api/ws`;
         ws = new WebSocket(`${proto}//${window.location.host}${wsPath}`);
         ws.addEventListener("open", () => {
+            wsRetryDelay = 1500; // 连接成功后重置延迟
             $("ws-text").textContent = "已连接";
             ($("ws-text") as HTMLElement).className = "text-sky-400 text-sm font-mono";
         });
@@ -1720,7 +1914,9 @@ async function main() {
         ws.addEventListener("close", () => {
             $("ws-text").textContent = "重连中…";
             ($("ws-text") as HTMLElement).className = "text-amber-400 text-sm font-mono";
-            window.setTimeout(connectWs, 1500);
+            const delay = wsRetryDelay;
+            wsRetryDelay = Math.min(wsRetryDelay * 2, wsMaxDelay); // 指数退避
+            window.setTimeout(connectWs, delay);
         });
     }
 

@@ -76,6 +76,8 @@ type GlobalConfig struct {
 	SourceMode       string            `json:"source_mode,omitempty"`    // 温度源选择模式：simple（小白）/ advanced（极客）
 	SensorAliases    map[string]string `json:"sensor_aliases,omitempty"` // 传感器ID → 用户别名
 	SensorHidden     []string          `json:"sensor_hidden,omitempty"`  // 隐藏的传感器ID列表
+	CPUSensor        string            `json:"cpu_sensor,omitempty"`     // 自定义 CPU 温度传感器 ID
+	GPUSensor        string            `json:"gpu_sensor,omitempty"`     // 自定义 GPU 温度传感器 ID
 }
 
 const CurrentConfigVersion = 2
@@ -109,17 +111,19 @@ type FanRuntime struct {
 }
 
 type Telemetry struct {
-	CPUTemp   *float64        `json:"cpu_temp,omitempty"`
-	CPUUsage  float64         `json:"cpu_usage"`
-	MemUsage  float64         `json:"mem_usage"`
-	MemTotal  *float64        `json:"mem_total,omitempty"`
-	GPUTemp   *float64        `json:"gpu_temp,omitempty"`
-	Uptime    int64           `json:"uptime"`
-	Disks     DiskPayload     `json:"disks"`
-	Fans      []FanRuntime    `json:"fans"`
-	Sensors   []SensorReading `json:"sensors"`
-	Timestamp time.Time       `json:"timestamp"`
-	History   HistorySeries   `json:"history"`
+	CPUTemp        *float64        `json:"cpu_temp,omitempty"`
+	CPUSensorLabel string          `json:"cpu_sensor_label,omitempty"`
+	CPUUsage       float64         `json:"cpu_usage"`
+	MemUsage       float64         `json:"mem_usage"`
+	MemTotal       *float64        `json:"mem_total,omitempty"`
+	GPUTemp        *float64        `json:"gpu_temp,omitempty"`
+	GPUSensorLabel string          `json:"gpu_sensor_label,omitempty"`
+	Uptime         int64           `json:"uptime"`
+	Disks          DiskPayload     `json:"disks"`
+	Fans           []FanRuntime    `json:"fans"`
+	Sensors        []SensorReading `json:"sensors"`
+	Timestamp      time.Time       `json:"timestamp"`
+	History        HistorySeries   `json:"history"`
 }
 
 type SensorReading struct {

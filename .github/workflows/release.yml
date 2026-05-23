@@ -50,27 +50,26 @@ jobs:
 
       - name: Install fnpack
         run: |
-          # 从官方地址下载 fnpack
           curl -L -o fnpack "https://static2.fnnas.com/fnpack/fnpack-1.2.1-linux-amd64"
           chmod +x fnpack
           sudo mv fnpack /usr/local/bin/fnpack
           fnpack --help
 
-      - name: Package with fnpack
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build URL Version
         run: |
           fnpack build
-
-      - name: Move fpk to dist
-        run: |
           mkdir -p dist
-          fpk_file=$(find . -maxdepth 1 -name "*.fpk" -type f | head -1)
-          if [[ -n "$fpk_file" ]]; then
-            mv "$fpk_file" dist/
-            echo "移动安装包到 dist/$(basename "$fpk_file")"
-          else
-            echo "错误: 未找到生成的 .fpk 文件"
-            exit 1
-          fi
+          mv *.fpk "dist/FanControlServer-${{ steps.get_version.outputs.VERSION }}-url.fpk"
+
+      - name: Build Iframe Version
+        run: |
+          sed -i 's/"type": "url"/"type": "iframe"/' app/ui/config
+          fnpack build
+          mv *.fpk "dist/FanControlServer-${{ steps.get_version.outputs.VERSION }}-iframe.fpk"
 
       - name: Create Release and Upload Assets
         uses: softprops/action-gh-release@v2
