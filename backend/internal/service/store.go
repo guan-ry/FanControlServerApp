@@ -127,7 +127,7 @@ func defaultConfig() model.Config {
 		Fans:    []model.FanConfig{},
 		Global: model.GlobalConfig{
 			PWMDeadzone:      5,
-			StopHysteresis:   2,
+			StopHysteresis:   5,
 			UpdateIntervalMS: 2000,
 			EmergencyTemp:    80,
 			StopBehavior:     model.StopBehaviorSet,

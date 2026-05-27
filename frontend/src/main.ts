@@ -22,8 +22,8 @@ import {
 import type {ConfigPayload, CurvePoint, FanConfig, GlobalConfig, ScannedFan, Telemetry} from "./types";
 
 const DEFAULT_CURVE: CurvePoint[] = [
-    {temp: 30, pwm: 80},
-    {temp: 55, pwm: 140},
+    {temp: 45, pwm: 120},
+    {temp: 60, pwm: 180},
     {temp: 75, pwm: 255}
 ];
 
@@ -1352,9 +1352,12 @@ function openFanSettingsDialog(idx: number) {
     applySourceModeUI(displayMode);
     initFanCurveChartShell();
     loadCurveIntoEditor();
-    ($("fe-deadzone") as HTMLInputElement).value = (fan.pwm_deadzone != null && !Number.isNaN(fan.pwm_deadzone)) ? String(fan.pwm_deadzone) : "";
-    ($("fe-hysteresis") as HTMLInputElement).value = (fan.stop_hysteresis != null && !Number.isNaN(fan.stop_hysteresis)) ? String(fan.stop_hysteresis) : "";
-    ($("fe-emergency") as HTMLInputElement).value = (fan.emergency_temp != null && !Number.isNaN(fan.emergency_temp)) ? String(fan.emergency_temp) : "";
+    const dz = fan.pwm_deadzone ?? config.global.pwm_deadzone;
+    ($("fe-deadzone") as HTMLInputElement).value = String(dz);
+    const hys = fan.stop_hysteresis ?? config.global.stop_hysteresis;
+    ($("fe-hysteresis") as HTMLInputElement).value = String(hys);
+    const em = fan.emergency_temp ?? config.global.emergency_temp;
+    ($("fe-emergency") as HTMLInputElement).value = String(em);
     const polRaw = fan.fallback_policy;
     const pol = (polRaw === "stop" || polRaw === "min_pwm" || polRaw === "full_speed" || polRaw === "follow_other") ? polRaw : "keep_last";
     ($("fe-fallback-policy") as HTMLSelectElement).value = pol;
@@ -1686,7 +1689,11 @@ async function addScannedFansFromSelection() {
         if (config.fans.some(f => f.id === id)) id = `${s.id}-${Date.now().toString(36)}`;
         const fan: FanConfig = {
             id, name: s.name, pwm_path: s.pwm_path, rpm_path: s.rpm_path, enable_path: s.enable_path,
-            mode: "curve", source: "cpu", manual_pwm: 120, curve: DEFAULT_CURVE.map(c => ({...c}))
+            mode: "curve", source: "cpu", manual_pwm: 120, curve: DEFAULT_CURVE.map(c => ({...c})),
+            // 从全局配置读取当前值，显式写入风扇配置
+            pwm_deadzone: config.global.pwm_deadzone,
+            stop_hysteresis: config.global.stop_hysteresis,
+            emergency_temp: config.global.emergency_temp,
         };
         newFans.push(fan);
         n++;

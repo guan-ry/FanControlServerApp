@@ -726,7 +726,6 @@ func (c *Controller) autoDiscoverFansOnFirstRun() {
 			StopHysteresis: &hysteresisVal,
 			EmergencyTemp:  &emergencyVal,
 			Curve: []model.CurvePoint{
-				{Temp: 35, PWM: 80},
 				{Temp: 45, PWM: 120},
 				{Temp: 60, PWM: 180},
 				{Temp: 75, PWM: 255},
