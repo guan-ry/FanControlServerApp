@@ -1695,7 +1695,7 @@ async function addScannedFansFromSelection() {
             enable_path: s.enable_path,
             chip: s.chip,
             device: s.device,
-            pwm_index: s.pwm_index,
+            pwm_index: Number(s.pwm_index),
             mode: "curve",
             source: "cpu",
             manual_pwm: 120,
