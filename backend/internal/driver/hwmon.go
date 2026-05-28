@@ -66,32 +66,35 @@ func (d *HWMONDriver) WritePWM(enablePath, pwmPath string, pwm int) error {
 }
 
 func (d *HWMONDriver) ScanFans() ([]map[string]string, error) {
-	entries, err := filepath.Glob("/sys/class/hwmon/hwmon*")
-	if err != nil {
-		return nil, err
-	}
-	// 使用非 nil 空切片，JSON 序列化为 []；nil 切片会变成 null 导致前端误判
 	fans := make([]map[string]string, 0)
+	entries, _ := filepath.Glob("/sys/class/hwmon/hwmon*")
+
 	for _, hwmon := range entries {
+		chip := readTrimmed(filepath.Join(hwmon, "name"), filepath.Base(hwmon))
+		device := ""
+		if link, err := os.Readlink(filepath.Join(hwmon, "device")); err == nil {
+			device = filepath.Base(link)
+		}
+
 		pwmFiles, _ := filepath.Glob(filepath.Join(hwmon, "pwm[0-9]"))
 		for _, pwmFile := range pwmFiles {
-			index := strings.TrimPrefix(filepath.Base(pwmFile), "pwm")
-			rpmPath := filepath.Join(hwmon, "fan"+index+"_input")
+			idx := strings.TrimPrefix(filepath.Base(pwmFile), "pwm")
+			stableId := fmt.Sprintf("%s/%s/pwm%s", chip, device, idx)
+			rpmPath := filepath.Join(hwmon, "fan"+idx+"_input")
 			if _, err := os.Stat(rpmPath); err != nil {
 				rpmPath = ""
 			}
-			enablePath := filepath.Join(hwmon, "pwm"+index+"_enable")
+			enablePath := filepath.Join(hwmon, "pwm"+idx+"_enable")
 			if _, err := os.Stat(enablePath); err != nil {
 				enablePath = ""
 			}
-			nameFile := filepath.Join(hwmon, "name")
-			name := filepath.Base(hwmon)
-			if content, err := os.ReadFile(nameFile); err == nil {
-				name = strings.TrimSpace(string(content))
-			}
+
 			fans = append(fans, map[string]string{
-				"id":          fmt.Sprintf("%s-pwm%s", filepath.Base(hwmon), index),
-				"name":        fmt.Sprintf("%s 风扇 %s", name, index),
+				"id":          stableId,
+				"name":        fmt.Sprintf("%s 风扇 %s", chip, idx),
+				"chip":        chip,
+				"device":      device,
+				"pwm_index":   idx,
 				"pwm_path":    pwmFile,
 				"rpm_path":    rpmPath,
 				"enable_path": enablePath,

@@ -1025,7 +1025,7 @@ function fillGlobalForm() {
     ($("g-stop-pwm") as HTMLInputElement).value = String(g.stop_pwm);
     updateStopPWMRow();
     updateGlobalTuningRowVisibility();
-    
+
     // 填充 CPU/GPU 传感器映射
     const cpuSensorValue = document.getElementById("cpu-sensor-value") as HTMLInputElement | null;
     if (cpuSensorValue) cpuSensorValue.value = g.cpu_sensor || "";
@@ -1033,7 +1033,7 @@ function fillGlobalForm() {
     if (cpuSensorDisplay) {
         cpuSensorDisplay.textContent = g.cpu_sensor ? getSourceLabel(g.cpu_sensor) : "-- 使用默认检测 --";
     }
-    
+
     const gpuSensorValue = document.getElementById("gpu-sensor-value") as HTMLInputElement | null;
     if (gpuSensorValue) gpuSensorValue.value = g.gpu_sensor || "";
     const gpuSensorDisplay = document.getElementById("gpu-sensor-display");
@@ -1113,7 +1113,7 @@ function renderCPUGPUSensorMenu(type: "cpu" | "gpu"): string {
     const sensors = telemetry?.sensors ?? [];
     const current = type === "cpu" ? (config.global.cpu_sensor || "") : (config.global.gpu_sensor || "");
     const items = sensors.filter(s => !config.global.sensor_hidden?.includes(s.id));
-    
+
     let html = `
 <div class="px-3 py-2 text-xs text-slate-400 border-b border-slate-700/50">
     选择一个 hwmon 传感器作为${type === "cpu" ? "CPU" : "GPU"}温度源
@@ -1123,14 +1123,14 @@ function renderCPUGPUSensorMenu(type: "cpu" | "gpu"): string {
     <span class="${!current ? "text-sky-300 font-medium" : "text-slate-200"} truncate">使用默认检测</span>
     ${!current ? '<iconify-icon class="text-sky-400 ml-2 flex-shrink-0" icon="mdi:check"></iconify-icon>' : ""}
 </button>`;
-    
+
     for (const s of items) {
         const isSelected = s.id === current;
         const name = config.global.sensor_aliases?.[s.id] || s.label || s.key;
         const chipLabel = s.device ? `${s.chip}·${s.device}` : s.chip;
         const displayName = `${chipLabel}·${name}`;
         const tempText = s.temp != null ? `${s.temp.toFixed(1)}°C` : "—";
-        
+
         html += `
 <button type="button" data-sensor-value="${esc(s.id)}"
         class="w-full flex items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-slate-700/70 ${isSelected ? "bg-slate-700/40" : ""}">
@@ -1141,7 +1141,7 @@ function renderCPUGPUSensorMenu(type: "cpu" | "gpu"): string {
     </span>
 </button>`;
     }
-    
+
     return html;
 }
 
@@ -1225,7 +1225,7 @@ function bindCPUGPUSensorMenus() {
             openCPUSensorMenu();
         });
     }
-    
+
     // GPU 传感器按钮
     const gpuBtn = document.getElementById("gpu-sensor-btn");
     if (gpuBtn) {
@@ -1235,13 +1235,13 @@ function bindCPUGPUSensorMenus() {
             openGPUSensorMenu();
         });
     }
-    
+
     // 点击外部关闭菜单
     document.addEventListener("click", () => {
         closeCPUSensorMenu();
         closeGPUSensorMenu();
     });
-    
+
     // CPU 菜单项点击委托
     const cpuMenu = document.getElementById("cpu-sensor-menu");
     if (cpuMenu) {
@@ -1254,7 +1254,7 @@ function bindCPUGPUSensorMenus() {
             }
         });
     }
-    
+
     // GPU 菜单项点击委托
     const gpuMenu = document.getElementById("gpu-sensor-menu");
     if (gpuMenu) {
@@ -1296,13 +1296,13 @@ function readGlobalForm(): GlobalConfig {
     const emEl = document.getElementById("g-emergency") as HTMLInputElement | null;
     const emRow = document.getElementById("g-row-emergency");
     if (emEl && emRow && !emRow.classList.contains("hidden")) out.emergency_temp = Math.max(0, Number(emEl.value) || 80);
-    
+
     // 读取 CPU/GPU 传感器映射
     const cpuSensorEl = document.getElementById("cpu-sensor-value") as HTMLInputElement | null;
     if (cpuSensorEl) out.cpu_sensor = cpuSensorEl.value.trim() || undefined;
     const gpuSensorEl = document.getElementById("gpu-sensor-value") as HTMLInputElement | null;
     if (gpuSensorEl) out.gpu_sensor = gpuSensorEl.value.trim() || undefined;
-    
+
     return out;
 }
 
@@ -1688,8 +1688,18 @@ async function addScannedFansFromSelection() {
         let id = s.id;
         if (config.fans.some(f => f.id === id)) id = `${s.id}-${Date.now().toString(36)}`;
         const fan: FanConfig = {
-            id, name: s.name, pwm_path: s.pwm_path, rpm_path: s.rpm_path, enable_path: s.enable_path,
-            mode: "curve", source: "cpu", manual_pwm: 120, curve: DEFAULT_CURVE.map(c => ({...c})),
+            id,
+            name: s.name,
+            pwm_path: s.pwm_path,
+            rpm_path: s.rpm_path,
+            enable_path: s.enable_path,
+            chip: s.chip,
+            device: s.device,
+            pwm_index: s.pwm_index,
+            mode: "curve",
+            source: "cpu",
+            manual_pwm: 120,
+            curve: DEFAULT_CURVE.map(c => ({...c})),
             // 从全局配置读取当前值，显式写入风扇配置
             pwm_deadzone: config.global.pwm_deadzone,
             stop_hysteresis: config.global.stop_hysteresis,
@@ -1704,7 +1714,7 @@ async function addScannedFansFromSelection() {
     }
     try {
         // 先保存到服务端
-        const tempConfig = { ...config, fans: [...config.fans, ...newFans] };
+        const tempConfig = {...config, fans: [...config.fans, ...newFans]};
         await saveConfig(tempConfig);
         // 保存成功后才更新本地配置
         config = tempConfig;
@@ -1806,10 +1816,10 @@ async function main() {
 
     $("btn-global-save").addEventListener("click", async () => {
         const originalGlobal = JSON.parse(JSON.stringify(config.global));
-        
+
         readSensorMgrIntoConfig();
         config.global = readGlobalForm();
-        
+
         try {
             await setGlobalConfig(config.global);
             toast("全局设置已保存", "success");
@@ -1861,11 +1871,11 @@ async function main() {
     });
     $("fe-save").addEventListener("click", async () => {
         const originalConfig = JSON.parse(JSON.stringify(config));
-        
+
         syncCurveToConfig();
         const fan = readFanFormIntoConfig();
         if (!fan) return;
-        
+
         try {
             await saveConfig(config);
             await setFanCurve(fan.id, fan.curve);
@@ -1896,6 +1906,10 @@ async function main() {
     initHistoryChart();
 
     await refresh();
+    const legacy = config.fans.filter(f => !f.chip);
+    if (legacy.length > 0) {
+        toast(`检测到 ${legacy.length} 个旧版本风扇配置缺少稳定标识，建议删除后重新扫描添加避免重启错乱`, "info")
+    }
 
     let ws: WebSocket | null = null;
     let wsRetryDelay = 1500;   // 初始重连延迟

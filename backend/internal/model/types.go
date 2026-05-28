@@ -47,6 +47,9 @@ type CurvePoint struct {
 type FanConfig struct {
 	ID         string       `json:"id"`
 	Name       string       `json:"name"`
+	Chip       string       `json:"chip"`
+	Device     string       `json:"device"`
+	PWMIndex   int          `json:"pwm_index"`
 	PWMPath    string       `json:"pwm_path"`
 	RPMPath    string       `json:"rpm_path"`
 	EnablePath string       `json:"enable_path"`
@@ -80,7 +83,7 @@ type GlobalConfig struct {
 	GPUSensor        string            `json:"gpu_sensor,omitempty"`     // 自定义 GPU 温度传感器 ID
 }
 
-const CurrentConfigVersion = 2
+const CurrentConfigVersion = 3
 
 type Config struct {
 	Version int          `json:"version"`

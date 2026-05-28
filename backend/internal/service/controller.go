@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -62,9 +63,40 @@ func NewController(store *Store) *Controller {
 }
 
 func (c *Controller) Start() error {
+	c.rebindFanPaths()
 	c.autoDiscoverFansOnFirstRun()
 	go c.loop()
 	return nil
+}
+func (c *Controller) rebindFanPaths() {
+	cfg := c.store.Get()
+	scanned, err := c.hwmon.ScanFans()
+	if err != nil || len(scanned) == 0 {
+		return
+	}
+	// 用chip+device+pwm_index 建索引
+	idx := make(map[string]map[string]string, len(scanned))
+	for _, s := range scanned {
+		key := s["chip"] + "|" + s["device"] + "|" + s["pwm_index"]
+		idx[key] = s
+	}
+	changed := false
+	for i := range cfg.Fans {
+		f := &cfg.Fans[i]
+		key := f.Chip + "|" + f.Device + "|" + strconv.Itoa(f.PWMIndex)
+		if cur, ok := idx[key]; ok {
+			if f.PWMPath != cur["pwm_path"] || f.RPMPath != cur["rpm_path"] || f.EnablePath != cur["enable_path"] {
+				logrus.Infof("[路径重绑定] %s: %s -> %s", f.ID, f.PWMPath, cur["pwm_path"])
+				f.PWMPath, f.EnablePath, f.EnablePath = cur["pwm_path"], cur["rpm_path"], cur["enable_path"]
+				changed = true
+			}
+		} else {
+			logrus.Warnf("[路径重绑定] 风扇 %s 在当前hwmon 中未找到对应芯片，保留旧路径", f.ID)
+		}
+	}
+	if changed {
+		_ = c.store.Save(cfg)
+	}
 }
 
 func (c *Controller) Stop() {

@@ -3,9 +3,11 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -155,6 +157,9 @@ func migrateConfig(cfg *model.Config) bool {
 	if cfg.Version < 2 {
 		migrateV1ToV2(cfg)
 	}
+	if cfg.Version < 3 {
+		migrateV2ToV3(cfg)
+	}
 
 	cfg.Version = model.CurrentConfigVersion
 	logrus.Infof("[配置] 配置迁移完成 → v%d", model.CurrentConfigVersion)
@@ -221,6 +226,43 @@ func migrateV1ToV2(cfg *model.Config) {
 		}
 	}
 	logrus.Infof("[配置] v2：降级策略默认已写入；全局调速三项已复制到尚未自定义的风扇")
+}
+
+// migrateV2ToV3 v2->v3: 为旧风扇补稳定表示 chip/device/pwm_index,并升级id
+func migrateV2ToV3(cfg *model.Config) {
+	for i := range cfg.Fans {
+		f := &cfg.Fans[i]
+		if f.Chip != "" && f.PWMIndex > 0 {
+			continue
+		}
+		if f.PWMPath == "" {
+			continue
+		}
+		chip, device, pwmIndex := stableFieldsFromPWMPath(f.PWMPath)
+		if chip == "" || pwmIndex <= 0 {
+			logrus.Warnf("[配置] v3迁移：风扇 %q 无法冲 pwm 路径解析稳定标识：%s", f.ID, f.PWMPath)
+			continue
+		}
+		f.Chip = chip
+		f.Device = device
+		f.PWMIndex = pwmIndex
+		f.ID = fmt.Sprintf("%s/%spwm%d", chip, device, pwmIndex)
+	}
+	logrus.Infof("[配置] v3迁移：已为风扇写入 chip/device/pwm_index 标识")
+}
+
+func stableFieldsFromPWMPath(pwmPath string) (chip, device string, pwmIndex int) {
+	dir := filepath.Dir(pwmPath)
+	if raw, err := os.ReadFile(filepath.Join(dir, "name")); err == nil {
+		chip = strings.TrimSpace(string(raw))
+	}
+	if link, err := os.Readlink(filepath.Join(dir, "device")); err == nil {
+		device = filepath.Base(link)
+	}
+	if n, err := strconv.Atoi(strings.TrimPrefix(filepath.Base(pwmPath), "pwm")); err == nil {
+		pwmIndex = n
+	}
+	return chip, device, pwmIndex
 }
 
 func normalizeConfig(cfg *model.Config) {

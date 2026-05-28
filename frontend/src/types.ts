@@ -10,6 +10,9 @@ export interface ScannedFan {
     pwm_path: string;
     rpm_path: string;
     enable_path: string;
+    chip: string;
+    device: string;
+    pwm_index: number
 }
 
 export interface FanConfig {
@@ -18,6 +21,9 @@ export interface FanConfig {
     pwm_path: string;
     rpm_path: string;
     enable_path: string;
+    chip: string;
+    device: string;
+    pwm_index: number
     mode: "manual" | "curve";
     source: string;
     manual_pwm: number;

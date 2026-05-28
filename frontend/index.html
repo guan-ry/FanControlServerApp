@@ -633,7 +633,7 @@
                            class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2"
                            placeholder="例如 CPU 风扇"/>
                 </div>
-                <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 hidden">
                     <label for="fe-pwm" class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">PWM
                         写入路径<span
                                 class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
@@ -642,7 +642,7 @@
                            class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2 font-mono text-[11px]"
                            placeholder="/sys/class/hwmon/.../pwm1"/>
                 </div>
-                <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 hidden">
                     <label for="fe-rpm"
                            class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">转速读取路径<span
                             class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
@@ -651,7 +651,7 @@
                            class="flex-1 min-w-0 bg-slate-800 border border-slate-600 rounded px-3 py-2 font-mono text-[11px]"
                            placeholder="/sys/class/hwmon/.../fan1_input"/>
                 </div>
-                <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 hidden">
                     <label for="fe-en" class="text-slate-400 text-xs sm:w-44 flex-shrink-0 leading-snug">PWM
                         使能路径<span
                                 class="inline-flex items-center justify-center w-4 h-4 text-[10px] bg-slate-600 rounded-full cursor-help ml-1"
