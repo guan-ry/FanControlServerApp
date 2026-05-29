@@ -1646,8 +1646,10 @@ function bindSourceModeSwitcher() {
     });
 }
 
-function pwmPathTaken(path: string): boolean {
-    return config.fans.some(f => f.pwm_path === path);
+function fanIdentityTaken(chip: string, device: string, pwmIndex: number): boolean {
+    return config.fans.some(
+        f => f.chip === chip && f.device === device && f.pwm_index === pwmIndex
+    )
 }
 
 async function runHardwareScan() {
@@ -1666,7 +1668,8 @@ async function runHardwareScan() {
 function renderScanTable() {
     const tbody = $("scan-fans-tbody") as HTMLElement;
     tbody.innerHTML = lastScanResults.map((s, i) => {
-        const taken = pwmPathTaken(s.pwm_path);
+        const pwmIndex = Number(s.pwm_index)
+        const taken = fanIdentityTaken(s.chip, s.device, pwmIndex);
         return `
 <tr class="border-b border-slate-800 ${taken ? "opacity-50" : ""}">
   <td class="p-2 align-top"><input type="checkbox" data-scan-idx="${i}" class="scan-cb rounded border-slate-600" ${taken ? "disabled" : ""} /></td>
@@ -1684,7 +1687,9 @@ async function addScannedFansFromSelection() {
     boxes.forEach(box => {
         const i = Number(box.dataset.scanIdx);
         const s = lastScanResults[i];
-        if (!s || pwmPathTaken(s.pwm_path)) return;
+        const pwmIndex = Number(s.pwm_index)
+        if (!s || !s.chip || !Number.isFinite(pwmIndex) || pwmIndex <= 0) return;
+        if (fanIdentityTaken(s.chip, s.device, pwmIndex)) return;
         let id = s.id;
         if (config.fans.some(f => f.id === id)) id = `${s.id}-${Date.now().toString(36)}`;
         const fan: FanConfig = {

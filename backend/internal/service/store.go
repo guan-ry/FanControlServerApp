@@ -246,7 +246,7 @@ func migrateV2ToV3(cfg *model.Config) {
 		f.Chip = chip
 		f.Device = device
 		f.PWMIndex = pwmIndex
-		f.ID = fmt.Sprintf("%s/%spwm%d", chip, device, pwmIndex)
+		f.ID = fmt.Sprintf("%s/%s/pwm%d", chip, device, pwmIndex)
 	}
 	logrus.Infof("[配置] v3迁移：已为风扇写入 chip/device/pwm_index 标识")
 }
