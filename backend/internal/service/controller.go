@@ -83,11 +83,14 @@ func (c *Controller) rebindFanPaths() {
 	changed := false
 	for i := range cfg.Fans {
 		f := &cfg.Fans[i]
+		if f.Chip == "" || f.PWMIndex <= 0 {
+			logrus.Warnf("[路径重重绑定] 风扇 %s 缺少 chip/pwm_index，请删除后重新扫描添加", f.ID)
+		}
 		key := f.Chip + "|" + f.Device + "|" + strconv.Itoa(f.PWMIndex)
 		if cur, ok := idx[key]; ok {
 			if f.PWMPath != cur["pwm_path"] || f.RPMPath != cur["rpm_path"] || f.EnablePath != cur["enable_path"] {
 				logrus.Infof("[路径重绑定] %s: %s -> %s", f.ID, f.PWMPath, cur["pwm_path"])
-				f.PWMPath, f.EnablePath, f.EnablePath = cur["pwm_path"], cur["rpm_path"], cur["enable_path"]
+				f.PWMPath, f.RPMPath, f.EnablePath = cur["pwm_path"], cur["rpm_path"], cur["enable_path"]
 				changed = true
 			}
 		} else {
@@ -745,12 +748,17 @@ func (c *Controller) autoDiscoverFansOnFirstRun() {
 		hysteresisVal := hys
 		emergencyVal := em
 
+		pwmIndex, _ := strconv.Atoi(strings.TrimSpace(item["pwm_index"]))
+
 		cfg.Fans = append(cfg.Fans, model.FanConfig{
 			ID:             id,
 			Name:           name,
 			PWMPath:        strings.TrimSpace(item["pwm_path"]),
 			RPMPath:        strings.TrimSpace(item["rpm_path"]),
 			EnablePath:     strings.TrimSpace(item["enable_path"]),
+			Chip:           strings.TrimSpace(item["chip"]),
+			Device:         strings.TrimSpace(item["device"]),
+			PWMIndex:       pwmIndex,
 			Mode:           model.FanModeCurve,
 			Source:         "cpu",
 			FallbackPolicy: model.FallbackKeepLast,
