@@ -225,19 +225,29 @@
         </div>
     </div>
     <div class="flex flex-wrap gap-3 items-center">
+        <!-- 刷新按钮：文字改为“刷新”，样式统一 -->
         <button type="button" id="btn-refresh"
-                class="px-4 py-2 text-xs font-bold rounded-xl bg-slate-800 border border-slate-600 text-slate-200 hover:bg-slate-700">
-            刷新状态
+                class="px-4 py-2 text-sm rounded-xl bg-slate-800 border border-slate-600 hover:border-sky-400 transition-all flex items-center gap-2">
+            <iconify-icon id="btn-refresh-icon" icon="mdi:refresh"></iconify-icon>
+            <span>刷新</span>
         </button>
-        <div class="glass-card px-4 py-2 flex items-center gap-3 border-l-4 border-l-sky-500">
-            <div class="text-right">
-                <div class="text-[10px] text-slate-500 uppercase font-bold">实时通道</div>
-                <div class="text-sky-400 text-sm font-mono" id="ws-text">未连接</div>
-            </div>
+
+        <!-- 通道状态卡片：添加连接图标，样式统一 -->
+        <div class="px-4 py-2 rounded-xl bg-slate-800 border border-slate-600 hover:border-sky-400 transition-all flex items-center gap-2">
+            <iconify-icon class="text-slate-300 text-base" icon="mdi:link-variant"></iconify-icon>
+            <span class="text-sm text-slate-300" id="ws-text">未连接</span>
         </div>
+
+        <!-- 打赏按钮：样式统一，悬停时边框、图标、文字变天蓝 -->
+        <button type="button" id="btn-donate" title="支持作者"
+                class="px-4 py-2 rounded-xl bg-slate-800 border border-slate-600 hover:border-sky-400 transition-all flex items-center gap-2 group">
+            <iconify-icon class="text-slate-300 text-base group-hover:text-sky-400 transition-colors" icon="mdi:heart-outline"></iconify-icon>
+            <span class="text-sm text-slate-300 group-hover:text-sky-400 transition-colors">打赏</span>
+        </button>
     </div>
 </header>
 
+<!-- 其余部分完全相同，保持不变 -->
 <div class="grid grid-cols-1 gap-6">
     <!-- 系统信息卡片（保持不变） -->
     <section class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -514,7 +524,7 @@
             <div id="cpu-gpu-sensor-panel" class="hidden">
                 <p class="text-xs text-slate-500 mb-3">
                     将特定 hwmon 传感器指定为 CPU 或 GPU 温度源，覆盖默认的读取逻辑。适用于非标准硬件或多 GPU 环境。</p>
-                
+
                 <!-- CPU 传感器选择 -->
                 <div class="mb-4">
                     <label class="block text-xs font-bold text-slate-300 mb-2 flex items-center gap-2">
@@ -794,32 +804,32 @@
     </div>
 </dialog>
 
-<!-- API Key 设置弹窗 -->
-<dialog id="auth-dialog"
-        class="rounded-2xl bg-slate-900 text-slate-100 border border-slate-600 p-0 backdrop:bg-black/60 max-w-md w-[92vw]">
+<!-- 支持作者：收款码弹窗（与页面样式统一） -->
+<dialog id="donate-dialog"
+        class="rounded-2xl bg-slate-900 text-slate-100 border border-slate-600 p-0 backdrop:bg-black/60 max-w-sm w-[92vw] shadow-xl">
     <div class="p-6">
-        <div class="flex items-center gap-3 mb-4">
-            <div class="p-2 bg-sky-500/10 rounded-xl border border-sky-500/20">
-                <iconify-icon class="text-2xl text-sky-400" icon="mdi:key-variant"></iconify-icon>
+        <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 flex items-center justify-center bg-sky-500/10 rounded-xl border border-sky-500/20">
+                    <iconify-icon class="text-2xl text-sky-400" icon="mdi:heart"></iconify-icon>
+                </div>
+                <div>
+                    <h3 class="text-lg font-bold text-white">支持作者</h3>
+                    <p class="text-xs text-slate-400">如果本项目对你有帮助，欢迎扫码支持</p>
+                </div>
             </div>
-            <div><h3 class="text-lg font-bold" id="auth-dialog-title">API Key 设置</h3>
-                <p class="text-xs text-slate-500" id="auth-dialog-desc">首次使用，请确认或修改 API Key</p></div>
-        </div>
-        <div class="space-y-3">
-            <div><label for="auth-key-input" class="text-sm text-slate-400 block mb-1">API Key</label><input type="text"
-                                                                                                             id="auth-key-input"
-                                                                                                             class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 font-mono text-sm text-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                                                                                             placeholder="请输入 API Key"
-                                                                                                             spellcheck="false"
-                                                                                                             autocomplete="off"/>
-            </div>
-            <p id="auth-error" class="text-xs text-red-400 hidden"></p>
-        </div>
-        <div class="flex justify-end gap-2 mt-6">
-            <button type="button" id="auth-confirm-btn"
-                    class="px-6 py-2.5 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white text-sm font-bold rounded-xl shadow-lg shadow-sky-500/20 transform active:scale-95 transition-all">
-                确认
+            <button type="button" id="donate-close"
+                    class="p-1.5 hover:bg-slate-700 rounded-md text-slate-400 transition-colors">
+                <iconify-icon class="text-xl" icon="mdi:close"></iconify-icon>
             </button>
+        </div>
+        <div class="flex flex-col items-center gap-3">
+            <img id="donate-qrcode" src="public/images/donate-qrcode.png" alt="收款码"
+                 class="w-72 h-72 rounded-xl object-contain bg-white p-2 shadow-md"/>
+            <p class="text-xs text-slate-500">扫码支持作者 ❤️</p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-700/50 text-center">
+            <p class="text-[11px] text-slate-500">你的每一份支持都是我前进的动力</p>
         </div>
     </div>
 </dialog>

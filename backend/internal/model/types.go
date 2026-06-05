@@ -143,15 +143,8 @@ type HistoryPoint struct {
 	Value *float64 `json:"value,omitempty"`
 }
 
-type FanHistoryPoint struct {
-	Time string `json:"time"`
-	RPM  int    `json:"rpm"`
-	PWM  int    `json:"pwm"`
-}
-
 type HistorySeries struct {
-	CPUTemp []HistoryPoint               `json:"cpu_temp"`
-	GPUTemp []HistoryPoint               `json:"gpu_temp"`
-	DiskAvg []HistoryPoint               `json:"disk_avg"`
-	Fans    map[string][]FanHistoryPoint `json:"fans"`
+	CPUTemp []HistoryPoint `json:"cpu_temp"`
+	GPUTemp []HistoryPoint `json:"gpu_temp"`
+	DiskAvg []HistoryPoint `json:"disk_avg"`
 }

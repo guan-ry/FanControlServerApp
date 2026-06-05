@@ -7,7 +7,8 @@
 //	cd backend
 //	go run ./cmd/mockserver
 //
-// 默认监听 :19528，与 frontend/vite.config.ts 的 proxy 目标对齐。
+// 默认监听 :19527，与真实后端及 frontend/vite.config.ts 的 proxy 目标一致，
+// 因此 mockserver 与真实后端二选一启动即可，前端 `npm run dev` 无需改配置。
 package main
 
 import (
@@ -230,7 +231,6 @@ func (s *mockState) buildTelemetry() model.Telemetry {
 			CPUTemp: []model.HistoryPoint{},
 			GPUTemp: []model.HistoryPoint{},
 			DiskAvg: []model.HistoryPoint{},
-			Fans:    map[string][]model.FanHistoryPoint{},
 		},
 	}
 }
@@ -255,8 +255,6 @@ func (s *mockState) loop() {
 
 // ============== HTTP 路由 ==============
 
-func okHandler(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) }
-
 func main() {
 	state := newMockState()
 	go state.loop()
@@ -265,13 +263,8 @@ func main() {
 	r := gin.Default()
 
 	r.GET("/api/auth/status", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"auth_required": false, "setup_pending": false})
+		c.JSON(http.StatusOK, gin.H{"gateway_mode": false})
 	})
-	r.GET("/api/auth/setup", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"token": "mock-token"})
-	})
-	r.POST("/api/auth/setup", okHandler)
-	r.POST("/api/auth/reset", okHandler)
 
 	api := r.Group("/api")
 
@@ -339,25 +332,6 @@ func main() {
 		for i := range state.cfg.Fans {
 			if state.cfg.Fans[i].ID == req.ID {
 				state.cfg.Fans[i].Mode = req.Mode
-			}
-		}
-		state.mu.Unlock()
-		c.JSON(http.StatusOK, gin.H{"ok": true})
-	})
-
-	api.POST("/fan/source", func(c *gin.Context) {
-		var req struct {
-			ID     string `json:"id"`
-			Source string `json:"source"`
-		}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		state.mu.Lock()
-		for i := range state.cfg.Fans {
-			if state.cfg.Fans[i].ID == req.ID {
-				state.cfg.Fans[i].Source = req.Source
 			}
 		}
 		state.mu.Unlock()
@@ -445,7 +419,7 @@ func main() {
 		}
 	})
 
-	addr := ":19528"
+	addr := ":19527"
 	println("[mock] 监听 http://127.0.0.1" + addr)
 	_ = r.Run(addr)
 }

@@ -1,5 +1,5 @@
 appname               = FanControlServer
-version               = 1.3.3
+version               = 1.3.4
 display_name          = Fan Control Server
 desc                  = <b>FanControlServer</b> 是一款智能风扇与温度管理工具，专为飞牛私有云及 Linux 服务器设计。<br><br>📁 <b>风扇控制：</b><br>- 独立设置每个风扇的智能温控曲线<br>- 手动/自动模式随时切换，支持 0‑255 精确 PWM 值<br>- 自动扫描硬件 PWM 通道，支持多风扇管理<br><br>🌡️ <b>硬件监控：</b><br>- 实时 CPU/GPU/内存/硬盘温度及使用率<br>- 支持 NVMe/SATA 硬盘温度读取<br>- 历史温度曲线图表（ECharts）<br><br>🔔 <b>安全机制：</b><br>- 可配置过热阈值，超限强制全速运转<br>- 停转温差防止频繁启停<br>- 系统登录态 + 管理员写保护<br><br>⚙️ <b>其他特点：</b><br>- 响应式 Web 界面，深色主题<br>- WebSocket 实时推送，无需手动刷新<br>- 通过系统统一网关访问：/app/FanControlServer（需 fnOS V1.1.31+）<br><br>🐛 <b>反馈与支持：</b><a href="https://github.com/guan-ry/FanControlServerApp/issues" target="_blank">GitHub Issues</a>
 platform              = x86

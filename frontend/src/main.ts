@@ -2,14 +2,9 @@ import "iconify-icon";
 import "./style.css";
 import * as echarts from "echarts";
 import {
-    authRequired,
-    confirmAuthSetup,
-    fetchAuthSetup,
     fetchConfig,
     fetchInfo,
     fetchScanFans,
-    gatewayMode,
-    getStoredToken,
     initAuthMode,
     removeFan,
     saveConfig,
@@ -17,7 +12,6 @@ import {
     setFanManualPWM,
     setFanMode,
     setGlobalConfig,
-    setStoredToken,
 } from "./api";
 import type {ConfigPayload, CurvePoint, FanConfig, GlobalConfig, ScannedFan, Telemetry} from "./types";
 
@@ -1739,77 +1733,35 @@ async function refresh() {
     fillGlobalForm();
 }
 
-async function ensureAuth(): Promise<boolean> {
-    if (gatewayMode) return true;
-    if (!authRequired) return true;
-    if (getStoredToken()) return true;
-
-    const setup = await fetchAuthSetup();
-    const dlg = $("auth-dialog") as HTMLDialogElement;
-    const input = $("auth-key-input") as HTMLInputElement;
-    const errEl = $("auth-error") as HTMLElement;
-    const title = $("auth-dialog-title") as HTMLElement;
-    const desc = $("auth-dialog-desc") as HTMLElement;
-
-    if (setup?.token) {
-        title.textContent = "首次设置 API Key";
-        desc.textContent = "系统已自动生成 API Key，确认后即可使用";
-        input.value = setup.token;
-    } else {
-        title.textContent = "输入 API Key";
-        desc.textContent = "请输入服务器配置的 API Key";
-        input.value = "";
-    }
-    errEl.classList.add("hidden");
-    dlg.addEventListener("cancel", e => e.preventDefault());
-
-    return new Promise(resolve => {
-        const btn = $("auth-confirm-btn");
-        const handler = async () => {
-            const key = input.value.trim();
-            if (!key) {
-                errEl.textContent = "请输入 API Key";
-                errEl.classList.remove("hidden");
-                return;
-            }
-            if (key.length < 32) {
-                errEl.textContent = "API Key 长度不得少于 32 个字符";
-                errEl.classList.remove("hidden");
-                return;
-            }
-            if (setup?.token) {
-                const ok = await confirmAuthSetup(key);
-                if (!ok) {
-                    errEl.textContent = "确认失败，请重试";
-                    errEl.classList.remove("hidden");
-                    return;
-                }
-            }
-            setStoredToken(key);
-            dlg.close();
-            resolve(true);
-        };
-        btn.addEventListener("click", handler, {once: true});
-        dlg.showModal();
-    });
-}
-
 async function main() {
     updateSubtitleDate();
     window.setInterval(updateSubtitleDate, 1000);
 
     await initAuthMode();
-    await ensureAuth();
 
-    window.addEventListener("auth-required", () => {
-        ensureAuth().then(() => refresh().catch(console.error));
+    const refreshBtn = $("btn-refresh") as HTMLButtonElement;
+    const refreshIcon = $("btn-refresh-icon");
+    refreshBtn.addEventListener("click", async () => {
+        if (refreshBtn.disabled) return;
+        refreshBtn.disabled = true;
+        refreshIcon.classList.add("animate-spin");
+        try {
+            await refresh();
+        } catch (e) {
+            console.error(e);
+            toast("刷新失败，请检查网络或权限", "error");
+        } finally {
+            refreshIcon.classList.remove("animate-spin");
+            refreshBtn.disabled = false;
+        }
     });
 
-    window.addEventListener("admin-required", () => {
-        toast("当前用户无管理员权限，无法修改配置", "error");
+    const donateDialog = $("donate-dialog") as HTMLDialogElement;
+    $("btn-donate").addEventListener("click", () => donateDialog.showModal());
+    $("donate-close").addEventListener("click", () => donateDialog.close());
+    donateDialog.addEventListener("click", e => {
+        if (e.target === donateDialog) donateDialog.close();
     });
-
-    $("btn-refresh").addEventListener("click", () => refresh().catch(console.error));
 
     $("btn-scan-fans").addEventListener("click", () => {
         ($("scan-fans-dialog") as HTMLDialogElement).showModal();

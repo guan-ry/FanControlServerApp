@@ -91,12 +91,6 @@ export interface HistoryPoint {
     value?: number;
 }
 
-export interface FanHistoryPoint {
-    time: string;
-    rpm: number;
-    pwm: number;
-}
-
 export interface Telemetry {
     cpu_temp?: number;
     cpu_usage: number;
@@ -117,6 +111,5 @@ export interface Telemetry {
         cpu_temp: HistoryPoint[];
         gpu_temp: HistoryPoint[];
         disk_avg: HistoryPoint[];
-        fans: Record<string, FanHistoryPoint[]>;
     };
 }

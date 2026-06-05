@@ -28,18 +28,22 @@
 - 过热保护：超过阈值自动全速
 - 停转回滞：防止临界温度频繁启停
 - 进程退出行为可选（保持当前或指定 PWM）
-- 支持飞牛统一网关认证（需 fnos系统 1.1.3104+）
+- 通过飞牛统一网关完成登录认证，写操作仅管理员可执行（需 fnOS V1.1.3100+）
 
 **其他**
 - 响应式 Web 深色界面，WebSocket 实时推送
 - 无外部 CDN 依赖，所有前端资源本地打包
-- 默认端口 19527
 
-## 技术栈
+[//]: # (- 默认端口 19527)
 
-- **后端**：Go + Gin + WebSocket + logrus
-- **前端**：Vite + TypeScript + Tailwind CSS + ECharts
-- **数据来源**：hwmon sysfs、smartctl、hdparm、nvidia-smi
+[//]: # (## 技术栈)
+
+[//]: # ()
+[//]: # (- **后端**：Go + Gin + WebSocket + logrus)
+
+[//]: # (- **前端**：Vite + TypeScript + Tailwind CSS + ECharts)
+
+[//]: # (- **数据来源**：hwmon sysfs、smartctl、hdparm、nvidia-smi)
 
 ## 构建
 
@@ -57,13 +61,17 @@
 
 产物：`dist/*.fpk`
 
-## 安装
+[//]: # (## 安装)
 
-```bash
-appcenter-cli install-fpk dist/FanControlServer.fpk
-```
+[//]: # ()
+[//]: # (```bash)
 
-安装向导可配置：服务端口、是否允许外部访问、是否启用认证。
+[//]: # (appcenter-cli install-fpk dist/FanControlServer.fpk)
+
+[//]: # (```)
+
+[//]: # ()
+[//]: # (安装后通过飞牛系统菜单 `/app/FanControlServer` 访问，登录认证由统一网关统一处理。)
 
 ## 目录结构
 
@@ -86,4 +94,12 @@ appcenter-cli install-fpk dist/FanControlServer.fpk
    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=guan-ry/FanControlServerApp&type=date&legend=top-left" />
    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=guan-ry/FanControlServerApp&type=date&legend=top-left" />
  </picture>
+</a>
+
+## 支持项目
+
+如果你觉得这个项目有用，欢迎请作者喝杯咖啡 ☕️
+
+<a href="./docs/images/donate-qrcode.png">
+    <img src="./docs/images/donate-qrcode.png" width="360" alt="打赏二维码" />
 </a>

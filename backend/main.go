@@ -32,13 +32,6 @@ func resolveConfigPath() string {
 	return "config.json"
 }
 
-func resolveTokenPath() string {
-	if tokenDir := os.Getenv("TRIM_PKGVAR"); tokenDir != "" {
-		return filepath.Join(tokenDir, "run", "api_token")
-	}
-	return "run/api_token"
-}
-
 func listenAddr() string {
 	bind := "127.0.0.1"
 	if os.Getenv("external_access") == "true" {
@@ -56,14 +49,6 @@ func listenAddr() string {
 		}
 	}
 	return bind + ":" + port
-}
-
-func requireAuthFromEnv() bool {
-	v := os.Getenv("require_auth")
-	if v == "false" {
-		return false
-	}
-	return true
 }
 
 // isGatewayMode 是否在飞牛应用环境中运行（由统一网关转发）。
@@ -122,18 +107,8 @@ func main() {
 		auth = api.NewGatewayAuthManager()
 		logrus.Info("[主程序] 鉴权：统一网关模式（X-Trim-* Header）")
 	} else {
-		tokenPath := resolveTokenPath()
-		requireAuth := requireAuthFromEnv()
-		var err error
-		auth, err = api.NewAuthManager(tokenPath, requireAuth)
-		if err != nil {
-			logrus.Fatalf("[主程序] 初始化鉴权失败：%v", err)
-		}
-		if requireAuth {
-			logrus.Info("[主程序] API 鉴权：已启用（Bearer + 首次确认）")
-		} else {
-			logrus.Warn("[主程序] API 鉴权：已关闭")
-		}
+		auth = api.NewStandaloneAuthManager()
+		logrus.Warn("[主程序] 鉴权：独立模式，未启用鉴权，请仅在受信任网络中使用")
 	}
 
 	controller := service.NewController(store)
@@ -158,10 +133,7 @@ func main() {
 			// 非网关模式下才监听 TCP 端口
 			addr := listenAddr()
 			server.Addr = addr
-			logrus.Infof("[主程序] 开发模式，HTTP 监听：%s，配置：%q", addr, cfgPath)
-			if !gatewayMode && auth.RequireAuth() && !auth.IsConfirmed() {
-				logrus.Warn("[主程序] API Key 尚未确认，请打开浏览器完成初始设置")
-			}
+			logrus.Infof("[主程序] 独立模式，HTTP 监听：%s，配置：%q", addr, cfgPath)
 			listenErr = server.ListenAndServe()
 		}
 		if listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {

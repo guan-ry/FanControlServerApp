@@ -66,13 +66,7 @@ func NewRouter(staticFS fs.FS, controller *service.Controller, store *service.St
 		})
 	}
 
-	authGroup := router.Group("/app/FanControlServer/api/auth")
-	{
-		authGroup.GET("/status", h.authStatus)
-		authGroup.GET("/setup", h.authSetupGet)
-		authGroup.POST("/setup", h.authSetupPost)
-		authGroup.POST("/reset", h.authReset)
-	}
+	router.GET("/app/FanControlServer/api/auth/status", h.authStatus)
 
 	// 读接口：网关模式下所有登录用户都可访问（网关已鉴权）
 	apiRead := router.Group("/app/FanControlServer/api")
@@ -92,7 +86,6 @@ func NewRouter(staticFS fs.FS, controller *service.Controller, store *service.St
 		apiWrite.POST("/fan/config", h.saveFanConfig)
 		apiWrite.POST("/fan/set", h.setFanPWM)
 		apiWrite.POST("/fan/mode", h.setFanMode)
-		apiWrite.POST("/fan/source", h.setFanSource)
 		apiWrite.POST("/fan/curve", h.setFanCurve)
 		apiWrite.POST("/fan/remove", h.removeFan)
 		apiWrite.POST("/global/config", h.setGlobalConfig)
@@ -202,20 +195,6 @@ func (h *handler) setFanMode(c *gin.Context) {
 		return
 	}
 	if abortWithError(c, http.StatusBadRequest, h.controller.SetFanMode(req.ID, req.Mode)) {
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
-}
-
-func (h *handler) setFanSource(c *gin.Context) {
-	var req struct {
-		ID     string `json:"id" binding:"required"`
-		Source string `json:"source" binding:"required"`
-	}
-	if !bindJSON(c, &req) {
-		return
-	}
-	if abortWithError(c, http.StatusBadRequest, h.controller.SetFanSource(req.ID, req.Source)) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})

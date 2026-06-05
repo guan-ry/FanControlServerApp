@@ -1,23 +1,7 @@
 import axios from "axios";
 import type {ConfigPayload, CurvePoint, GlobalConfig, ScannedFan, Telemetry} from "./types";
 
-const TOKEN_KEY = "fancontrol_api_token";
-
-export function getStoredToken(): string | null {
-    return localStorage.getItem(TOKEN_KEY);
-}
-
-export function setStoredToken(token: string) {
-    localStorage.setItem(TOKEN_KEY, token);
-}
-
-export function clearStoredToken() {
-    localStorage.removeItem(TOKEN_KEY);
-}
-
-export let authRequired = true;
 export let gatewayMode = false;
-export let currentUser: { uid: string; username: string; is_admin: boolean } | null = null;
 
 function apiBase(): string {
     const base = import.meta.env.BASE_URL;
@@ -26,22 +10,10 @@ function apiBase(): string {
 
 export async function initAuthMode(): Promise<void> {
     try {
-        const {data} = await axios.get<{
-            gateway_mode?: boolean;
-            logged_in?: boolean;
-            auth_required?: boolean;
-            setup_pending?: boolean;
-            user?: { uid: string; username: string; is_admin: boolean };
-        }>(`${apiBase()}/api/auth/status`);
-        if (data.gateway_mode) {
-            gatewayMode = true;
-            authRequired = false;
-            currentUser = data.logged_in && data.user ? data.user : null;
-            return;
-        }
-        authRequired = data.auth_required ?? true;
+        const {data} = await axios.get<{ gateway_mode?: boolean }>(`${apiBase()}/api/auth/status`);
+        gatewayMode = !!data.gateway_mode;
     } catch {
-        authRequired = true;
+        gatewayMode = false;
     }
 }
 
@@ -50,54 +22,19 @@ const client = axios.create({
     withCredentials: true  // 网关模式下需要携带 Cookie/Session
 });
 
-client.interceptors.request.use(config => {
-    if (!gatewayMode) {
-        const token = getStoredToken();
-        if (authRequired && token) {
-            config.headers.Authorization = `Bearer ${token}`;
-        }
-    }
-    // 网关模式下不添加任何 Header，完全依赖飞牛网关透传
-    return config;
-});
-
 client.interceptors.response.use(
     res => res,
     err => {
         const status = err.response?.status;
         const backendMsg = err.response?.data?.error;
-        
-        if (gatewayMode && status === 403) {
+        if (status === 403) {
             err.message = backendMsg || "需要管理员权限";
-        } else if (status === 401 && authRequired) {
-            err.message = backendMsg || "认证失效，请重新登录";
-            clearStoredToken();
-            window.dispatchEvent(new CustomEvent("auth-required"));
         } else if (backendMsg) {
             err.message = backendMsg;
         }
-        
         return Promise.reject(err);
     }
 );
-
-export async function fetchAuthSetup(): Promise<{ token: string } | null> {
-    try {
-        const {data} = await axios.get<{ token: string }>("/api/auth/setup");
-        return data;
-    } catch {
-        return null;
-    }
-}
-
-export async function confirmAuthSetup(token: string): Promise<boolean> {
-    try {
-        await axios.post("/api/auth/setup", {token});
-        return true;
-    } catch {
-        return false;
-    }
-}
 
 export async function fetchScanFans() {
     const {data} = await client.get<{ fans: ScannedFan[] | null }>("/device/scan");
@@ -120,10 +57,6 @@ export async function saveConfig(payload: ConfigPayload) {
 
 export async function setFanMode(id: string, mode: "manual" | "curve") {
     await client.post("/fan/mode", {id, mode});
-}
-
-export async function setFanSource(id: string, source: string) {
-    await client.post("/fan/source", {id, source});
 }
 
 export async function setFanManualPWM(id: string, pwm: number) {

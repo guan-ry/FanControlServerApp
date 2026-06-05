@@ -35,7 +35,6 @@ type Controller struct {
 	lastCPUHistoryTime  time.Time            // CPU 历史上次记录时间
 	lastGPUHistoryTime  time.Time            // GPU 历史上次记录时间
 	lastDiskHistoryTime time.Time            // 磁盘历史上次记录时间
-	lastFanHistoryTime  time.Time            // 风扇历史上次记录时间
 	sensorChans         []driver.TempChannel // 缓存 hwmon 温度通道列表
 	lastSensorScan      time.Time            // 上次扫描时间
 }
@@ -57,7 +56,6 @@ func NewController(store *Store) *Controller {
 			CPUTemp: []model.HistoryPoint{},
 			GPUTemp: []model.HistoryPoint{},
 			DiskAvg: []model.HistoryPoint{},
-			Fans:    map[string][]model.FanHistoryPoint{},
 		},
 	}
 }
@@ -223,8 +221,6 @@ func (c *Controller) collectAndApply(cfg model.Config) model.Telemetry {
 			Mode:      fan.Mode,
 			TargetPWM: target,
 		})
-		//  前端尚未展示风扇历史图表，暂时禁用采集以减少开销
-		// c.pushFanHistory(fan.ID, now, rpm, applied)
 	}
 
 	return model.Telemetry{
@@ -623,17 +619,6 @@ func (c *Controller) SetFanMode(id string, mode model.FanMode) error {
 	return errors.New("未找到指定风扇")
 }
 
-func (c *Controller) SetFanSource(id, source string) error {
-	cfg := c.store.Get()
-	for i := range cfg.Fans {
-		if cfg.Fans[i].ID == id {
-			cfg.Fans[i].Source = source
-			return c.store.Save(cfg)
-		}
-	}
-	return errors.New("未找到指定风扇")
-}
-
 func (c *Controller) SetFanManualPWM(id string, pwm int) error {
 	cfg := c.store.Get()
 	for i := range cfg.Fans {
@@ -686,7 +671,6 @@ func (c *Controller) RemoveFan(id string) error {
 		return err
 	}
 	c.mu.Lock()
-	delete(c.history.Fans, id)
 	delete(c.lastPWM, id)
 	delete(c.lastValidPWM, id)
 	c.mu.Unlock()
@@ -790,17 +774,6 @@ func (c *Controller) pushTempHistory(dst *[]model.HistoryPoint, lastTime *time.T
 	if len(*dst) > 60 {
 		*dst = (*dst)[len(*dst)-60:]
 	}
-}
-
-func (c *Controller) pushFanHistory(id string, now time.Time, rpm, pwm int) {
-	if now.Sub(c.lastFanHistoryTime) < time.Minute {
-		return
-	}
-	series := append(c.history.Fans[id], model.FanHistoryPoint{Time: now.Format("15:04"), RPM: rpm, PWM: pwm})
-	if len(series) > 60 {
-		series = series[len(series)-60:]
-	}
-	c.history.Fans[id] = series
 }
 
 func evaluateFanStatus(rpm int) model.FanStatus {
