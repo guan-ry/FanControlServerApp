@@ -17,41 +17,43 @@ import (
 )
 
 type Controller struct {
-	store               *Store
-	hwmon               *driver.HWMONDriver
-	system              *driver.SystemDriver
-	smartctl            *driver.SmartCtlDriver
-	gpu                 *driver.GPUDriver
-	mu                  sync.RWMutex
-	telemetry           model.Telemetry
-	history             model.HistorySeries
-	lastPWM             map[string]int
-	lastValidPWM        map[string]int // 滞回区间保留的最后有效PWM
-	subs                map[chan model.Telemetry]struct{}
-	stopCh              chan struct{}
-	stopped             bool
-	loopDoneCh          chan struct{}
-	startTime           time.Time
-	lastCPUHistoryTime  time.Time            // CPU 历史上次记录时间
-	lastGPUHistoryTime  time.Time            // GPU 历史上次记录时间
-	lastDiskHistoryTime time.Time            // 磁盘历史上次记录时间
-	sensorChans         []driver.TempChannel // 缓存 hwmon 温度通道列表
-	lastSensorScan      time.Time            // 上次扫描时间
+	store                *Store
+	hwmon                *driver.HWMONDriver
+	system               *driver.SystemDriver
+	smartctl             *driver.SmartCtlDriver
+	gpu                  *driver.GPUDriver
+	mu                   sync.RWMutex
+	telemetry            model.Telemetry
+	history              model.HistorySeries
+	lastPWM              map[string]int
+	lastValidPWM         map[string]int // 滞回区间保留的最后有效PWM
+	originalThermalTrips map[string]int // thermal_binary 启动前的 active trip（m°C）
+	subs                 map[chan model.Telemetry]struct{}
+	stopCh               chan struct{}
+	stopped              bool
+	loopDoneCh           chan struct{}
+	startTime            time.Time
+	lastCPUHistoryTime   time.Time            // CPU 历史上次记录时间
+	lastGPUHistoryTime   time.Time            // GPU 历史上次记录时间
+	lastDiskHistoryTime  time.Time            // 磁盘历史上次记录时间
+	sensorChans          []driver.TempChannel // 缓存 hwmon 温度通道列表
+	lastSensorScan       time.Time            // 上次扫描时间
 }
 
 func NewController(store *Store) *Controller {
 	return &Controller{
-		store:        store,
-		hwmon:        driver.NewHWMONDriver(),
-		system:       driver.NewSystemDriver(),
-		smartctl:     driver.NewSmartCtlDriver(),
-		gpu:          driver.NewGPUDriver(),
-		lastPWM:      map[string]int{},
-		lastValidPWM: map[string]int{},
-		subs:         map[chan model.Telemetry]struct{}{},
-		stopCh:       make(chan struct{}),
-		loopDoneCh:   make(chan struct{}),
-		startTime:    time.Now(),
+		store:                store,
+		hwmon:                driver.NewHWMONDriver(),
+		system:               driver.NewSystemDriver(),
+		smartctl:             driver.NewSmartCtlDriver(),
+		gpu:                  driver.NewGPUDriver(),
+		lastPWM:              map[string]int{},
+		lastValidPWM:         map[string]int{},
+		originalThermalTrips: map[string]int{},
+		subs:                 map[chan model.Telemetry]struct{}{},
+		stopCh:               make(chan struct{}),
+		loopDoneCh:           make(chan struct{}),
+		startTime:            time.Now(),
 		history: model.HistorySeries{
 			CPUTemp: []model.HistoryPoint{},
 			GPUTemp: []model.HistoryPoint{},
@@ -63,39 +65,91 @@ func NewController(store *Store) *Controller {
 func (c *Controller) Start() error {
 	c.rebindFanPaths()
 	c.autoDiscoverFansOnFirstRun()
+	c.captureOriginalThermalTrips()
 	go c.loop()
 	return nil
 }
-func (c *Controller) rebindFanPaths() {
-	cfg := c.store.Get()
+func (c *Controller) bindFanPaths(cfg *model.Config) bool {
 	scanned, err := c.hwmon.ScanFans()
 	if err != nil || len(scanned) == 0 {
-		return
+		return false
 	}
-	// 用chip+device+pwm_index 建索引
+
+	// 用 chip+device+pwm_index 建索引，避免 hwmon 编号在重启后变化。
 	idx := make(map[string]map[string]string, len(scanned))
-	for _, s := range scanned {
-		key := s["chip"] + "|" + s["device"] + "|" + s["pwm_index"]
-		idx[key] = s
+	for _, item := range scanned {
+		key := item["chip"] + "|" + item["device"] + "|" + item["pwm_index"]
+		idx[key] = item
 	}
+
 	changed := false
 	for i := range cfg.Fans {
-		f := &cfg.Fans[i]
-		if f.Chip == "" || f.PWMIndex <= 0 {
-			logrus.Warnf("[路径重重绑定] 风扇 %s 缺少 chip/pwm_index，请删除后重新扫描添加", f.ID)
+		fan := &cfg.Fans[i]
+		if fan.Chip == "" || fan.PWMIndex <= 0 {
+			logrus.Warnf("[路径重绑定] 风扇 %s 缺少 chip/pwm_index，请删除后重新扫描添加", fan.ID)
+			continue
 		}
-		key := f.Chip + "|" + f.Device + "|" + strconv.Itoa(f.PWMIndex)
-		if cur, ok := idx[key]; ok {
-			if f.PWMPath != cur["pwm_path"] || f.RPMPath != cur["rpm_path"] || f.EnablePath != cur["enable_path"] {
-				logrus.Infof("[路径重绑定] %s: %s -> %s", f.ID, f.PWMPath, cur["pwm_path"])
-				f.PWMPath, f.RPMPath, f.EnablePath = cur["pwm_path"], cur["rpm_path"], cur["enable_path"]
-				changed = true
+
+		key := fan.Chip + "|" + fan.Device + "|" + strconv.Itoa(fan.PWMIndex)
+		cur, ok := idx[key]
+		if !ok {
+			logrus.Warnf("[路径重绑定] 风扇 %s 在当前 hwmon 中未找到对应芯片，保留旧路径", fan.ID)
+			continue
+		}
+
+		newType := model.FanControlType(cur["control_type"])
+		if newType == "" {
+			newType = model.FanControlPWM
+		}
+		newRPMIsNominal := cur["rpm_is_nominal"] == "true"
+		newThermalHysteresis, _ := strconv.ParseFloat(cur["thermal_hysteresis"], 64)
+		newNominalRPM, _ := strconv.Atoi(cur["nominal_rpm"])
+		needsUpdate := fan.PWMPath != cur["pwm_path"] ||
+			fan.RPMPath != cur["rpm_path"] ||
+			fan.EnablePath != cur["enable_path"] ||
+			fan.ControlType != newType ||
+			fan.ThermalZonePath != cur["thermal_zone_path"] ||
+			fan.ThermalTripPath != cur["thermal_trip_path"] ||
+			fan.ThermalHystPath != cur["thermal_hyst_path"] ||
+			fan.ThermalPolicyPath != cur["thermal_policy_path"] ||
+			fan.ThermalZoneType != cur["thermal_zone_type"] ||
+			fan.ThermalPolicy != cur["thermal_policy"] ||
+			fan.ThermalHysteresis != newThermalHysteresis ||
+			fan.NominalRPM != newNominalRPM ||
+			fan.RPMIsNominal != newRPMIsNominal
+		if !needsUpdate {
+			continue
+		}
+
+		logrus.Infof("[路径重绑定] %s: %s -> %s（%s）", fan.ID, fan.PWMPath, cur["pwm_path"], newType)
+		wasPWM := fan.ControlType == "" || fan.ControlType == model.FanControlPWM
+		fan.PWMPath = cur["pwm_path"]
+		fan.RPMPath = cur["rpm_path"]
+		fan.EnablePath = cur["enable_path"]
+		fan.ControlType = newType
+		fan.ThermalZonePath = cur["thermal_zone_path"]
+		fan.ThermalTripPath = cur["thermal_trip_path"]
+		fan.ThermalHystPath = cur["thermal_hyst_path"]
+		fan.ThermalPolicyPath = cur["thermal_policy_path"]
+		fan.ThermalZoneType = cur["thermal_zone_type"]
+		fan.ThermalPolicy = cur["thermal_policy"]
+		fan.ThermalHysteresis = newThermalHysteresis
+		fan.NominalRPM = newNominalRPM
+		fan.RPMIsNominal = newRPMIsNominal
+		if newType == model.FanControlThermalBinary {
+			fan.Source = "cpu"
+			if wasPWM && looksLikeDefaultPWMCurve(fan.Curve) {
+				fan.Curve = defaultThermalBinaryCurve()
 			}
-		} else {
-			logrus.Warnf("[路径重绑定] 风扇 %s 在当前hwmon 中未找到对应芯片，保留旧路径", f.ID)
 		}
+		changed = true
 	}
-	if changed {
+	return changed
+}
+
+func (c *Controller) rebindFanPaths() {
+	cfg := c.store.Get()
+	if c.bindFanPaths(&cfg) {
 		_ = c.store.Save(cfg)
 	}
 }
@@ -194,15 +248,19 @@ func (c *Controller) collectAndApply(cfg model.Config) model.Telemetry {
 
 	fans := make([]model.FanRuntime, 0, len(cfg.Fans))
 	for _, fan := range cfg.Fans {
-		target, _ := c.calculateTargetPWM(fan, cfg.Global, cpuTemp, gpuTemp, disks, sensors)
-		var applied int
-		if target < 0 {
-			// 温度源不可用且策略为 keep_last：保持上次 PWM 不动
-			if v, ok := c.lastPWM[fan.ID]; ok {
-				applied = v
-			}
+		var target, applied int
+		if fan.ControlType == model.FanControlThermalBinary {
+			applied, target = c.applyThermalBinary(fan, cpuTemp)
 		} else {
-			applied = c.applyPWM(fan, target, effectivePWMDeadzone(fan, cfg.Global))
+			target, _ = c.calculateTargetPWM(fan, cfg.Global, cpuTemp, gpuTemp, disks, sensors)
+			if target < 0 {
+				// 温度源不可用且策略为 keep_last：保持上次 PWM 不动
+				if v, ok := c.lastPWM[fan.ID]; ok {
+					applied = v
+				}
+			} else {
+				applied = c.applyPWM(fan, target, effectivePWMDeadzone(fan, cfg.Global))
+			}
 		}
 		rpm := 0
 		if fan.RPMPath != "" {
@@ -212,14 +270,20 @@ func (c *Controller) collectAndApply(cfg model.Config) model.Telemetry {
 		}
 		status := evaluateFanStatus(rpm)
 		fans = append(fans, model.FanRuntime{
-			ID:        fan.ID,
-			Name:      fan.Name,
-			PWM:       applied,
-			RPM:       rpm,
-			Status:    status,
-			Source:    fan.Source,
-			Mode:      fan.Mode,
-			TargetPWM: target,
+			ID:                fan.ID,
+			Name:              fan.Name,
+			PWM:               applied,
+			RPM:               rpm,
+			Status:            status,
+			Source:            fan.Source,
+			Mode:              fan.Mode,
+			TargetPWM:         target,
+			ControlType:       fan.ControlType,
+			ThermalZoneType:   fan.ThermalZoneType,
+			ThermalPolicy:     fan.ThermalPolicy,
+			ThermalHysteresis: fan.ThermalHysteresis,
+			NominalRPM:        fan.NominalRPM,
+			RPMIsNominal:      fan.RPMIsNominal,
 		})
 	}
 
@@ -547,6 +611,133 @@ func (c *Controller) resolveSourceTemp(
 	return nil
 }
 
+func defaultThermalBinaryCurve() []model.CurvePoint {
+	return []model.CurvePoint{{Temp: 60, PWM: 255}, {Temp: 80, PWM: 255}}
+}
+
+func looksLikeDefaultPWMCurve(curve []model.CurvePoint) bool {
+	if len(curve) != 3 {
+		return false
+	}
+	return curve[0].Temp == 45 && curve[0].PWM == 120 &&
+		curve[1].Temp == 60 && curve[1].PWM == 180 &&
+		curve[2].Temp == 75 && curve[2].PWM == 255
+}
+
+func thermalBinaryCurveTrip(curve []model.CurvePoint) int {
+	for _, point := range curve {
+		if point.PWM > 0 {
+			// 保留内核控制的安全边界。OES Plus 默认 60°C，允许用户在 40–75°C 内调整。
+			t := int(math.Round(point.Temp * 1000))
+			return maxInt(40000, minInt(75000, t))
+		}
+	}
+	return 60000
+}
+
+func (c *Controller) rememberOriginalThermalTrip(fan model.FanConfig) (int, bool) {
+	if fan.ControlType != model.FanControlThermalBinary || fan.ThermalTripPath == "" {
+		return 0, false
+	}
+	c.mu.RLock()
+	trip, ok := c.originalThermalTrips[fan.ID]
+	c.mu.RUnlock()
+	if ok {
+		return trip, true
+	}
+
+	trip, err := c.hwmon.ReadThermalTrip(fan.ThermalTripPath)
+	if err != nil {
+		logrus.Warnf("[thermal] 读取 %s 原始 active trip 失败：%v", fan.Name, err)
+		return 0, false
+	}
+	c.mu.Lock()
+	if existing, exists := c.originalThermalTrips[fan.ID]; exists {
+		trip = existing
+	} else {
+		c.originalThermalTrips[fan.ID] = trip
+	}
+	c.mu.Unlock()
+	logrus.Infof("[thermal] 记录 %s 原始 active trip=%.1f°C", fan.Name, float64(trip)/1000)
+	return trip, true
+}
+
+func (c *Controller) captureOriginalThermalTrips() {
+	cfg := c.store.Get()
+	for _, fan := range cfg.Fans {
+		c.rememberOriginalThermalTrip(fan)
+	}
+}
+
+func (c *Controller) restoreOriginalThermalTrips(fans []model.FanConfig) {
+	for _, fan := range fans {
+		if fan.ControlType != model.FanControlThermalBinary || fan.ThermalTripPath == "" {
+			continue
+		}
+		c.mu.RLock()
+		trip, ok := c.originalThermalTrips[fan.ID]
+		c.mu.RUnlock()
+		if !ok {
+			continue
+		}
+		if err := c.hwmon.WriteThermalTrip(fan.ThermalTripPath, trip); err != nil {
+			logrus.Warnf("[thermal] 恢复 %s active trip 失败：%v", fan.Name, err)
+		} else {
+			logrus.Infof("[thermal] 已恢复 %s active trip=%.1f°C", fan.Name, float64(trip)/1000)
+		}
+	}
+}
+
+// applyThermalBinary 不与 step_wise governor 争抢 pwm1，而是只调整其 active trip。
+// 曲线模式使用第一个非零曲线点作为开启温度；手动非零表示常开，手动零恢复启动前阈值。
+func (c *Controller) applyThermalBinary(fan model.FanConfig, cpuTemp *float64) (applied int, target int) {
+	if fan.ThermalTripPath == "" {
+		logrus.Warnf("[thermal] %s 缺少 active trip 绑定，拒绝直接争抢 PWM", fan.Name)
+		if v, err := c.hwmon.ReadPWM(fan.PWMPath); err == nil {
+			return v, v
+		}
+		return 0, 0
+	}
+
+	originalTrip, hasOriginal := c.rememberOriginalThermalTrip(fan)
+	desiredTrip := thermalBinaryCurveTrip(fan.Curve)
+	if fan.Mode == model.FanModeManual {
+		if fan.ManualPWM > 0 {
+			desiredTrip = 40000 // 安全的常开模式
+		} else if hasOriginal {
+			desiredTrip = originalTrip // 不提供危险的“强制关闭”，交还内核原始阈值
+		}
+	}
+
+	currentTrip, err := c.hwmon.ReadThermalTrip(fan.ThermalTripPath)
+	if err != nil {
+		logrus.Warnf("[thermal] 读取 %s active trip 失败：%v", fan.Name, err)
+	} else if currentTrip != desiredTrip {
+		if err = c.hwmon.WriteThermalTrip(fan.ThermalTripPath, desiredTrip); err != nil {
+			logrus.Warnf("[thermal] 写入 %s active trip 失败：%v", fan.Name, err)
+		} else {
+			logrus.Infof("[thermal] %s active trip %.1f°C → %.1f°C（内核 step_wise 控制）",
+				fan.Name, float64(currentTrip)/1000, float64(desiredTrip)/1000)
+		}
+	}
+
+	if v, err := c.hwmon.ReadPWM(fan.PWMPath); err == nil {
+		applied = v
+	}
+	// 二态设备只向前端报告 0/255，fan1_input 是设备树标称值而非测速反馈。
+	if applied > 0 {
+		applied = 255
+	}
+	target = applied
+	if cpuTemp == nil {
+		logrus.Warnf("[thermal] %s CPU 温度不可用，内核 thermal governor 仍保持接管", fan.Name)
+	}
+	c.mu.Lock()
+	c.lastPWM[fan.ID] = applied
+	c.mu.Unlock()
+	return applied, target
+}
+
 func (c *Controller) applyPWM(fan model.FanConfig, target int, deadzone int) int {
 	target = clampPWM(target)
 
@@ -589,6 +780,7 @@ func (c *Controller) applyPWM(fan model.FanConfig, target int, deadzone int) int
 
 func (c *Controller) applyStopBehavior() {
 	cfg := c.store.Get()
+	c.restoreOriginalThermalTrips(cfg.Fans)
 	if cfg.Global.StopBehavior != model.StopBehaviorSet {
 		logrus.Info("[控制器] 退出行为：保持当前 PWM")
 		return
@@ -596,6 +788,9 @@ func (c *Controller) applyStopBehavior() {
 	targetPWM := clampPWM(cfg.Global.StopPWM)
 	logrus.Infof("[控制器] 退出行为：将所有风扇设为 PWM=%d", targetPWM)
 	for _, fan := range cfg.Fans {
+		if fan.ControlType == model.FanControlThermalBinary {
+			continue
+		}
 		if err := c.hwmon.WritePWM(fan.EnablePath, fan.PWMPath, targetPWM); err != nil {
 			logrus.Warnf("[控制器] 退出写入 PWM 失败，风扇 %s（%s）：%v", fan.Name, fan.ID, err)
 		} else {
@@ -605,7 +800,16 @@ func (c *Controller) applyStopBehavior() {
 }
 
 func (c *Controller) SaveConfig(cfg model.Config) error {
-	return c.store.Save(cfg)
+	// 前端旧版本在“扫描后添加”时只提交 PWM 字段。保存前必须由后端重新
+	// 绑定硬件元数据，防止 OES Plus gpio_fan 被误当作普通 PWM 直接写入。
+	c.bindFanPaths(&cfg)
+	if err := c.store.Save(cfg); err != nil {
+		return err
+	}
+	for _, fan := range cfg.Fans {
+		c.rememberOriginalThermalTrip(fan)
+	}
+	return nil
 }
 
 func (c *Controller) SetFanMode(id string, mode model.FanMode) error {
@@ -658,8 +862,10 @@ func (c *Controller) RemoveFan(id string) error {
 	if targetFan == nil {
 		return errors.New("未找到指定风扇")
 	}
-	// 恢复自动模式：如果 EnablePath 非空，写入 0 启用硬件自动控制
-	if targetFan.EnablePath != "" {
+	if targetFan.ControlType == model.FanControlThermalBinary {
+		c.restoreOriginalThermalTrips([]model.FanConfig{*targetFan})
+	} else if targetFan.EnablePath != "" {
+		// 普通 PWM 设备沿用原项目的自动模式恢复逻辑。
 		if err := os.WriteFile(targetFan.EnablePath, []byte("0\n"), 0644); err != nil {
 			logrus.Warnf("[控制器] 恢复风扇 %s 自动模式失败: %v", targetFan.Name, err)
 		} else {
@@ -733,28 +939,48 @@ func (c *Controller) autoDiscoverFansOnFirstRun() {
 		emergencyVal := em
 
 		pwmIndex, _ := strconv.Atoi(strings.TrimSpace(item["pwm_index"]))
+		thermalHysteresis, _ := strconv.ParseFloat(strings.TrimSpace(item["thermal_hysteresis"]), 64)
+		nominalRPM, _ := strconv.Atoi(strings.TrimSpace(item["nominal_rpm"]))
 
 		cfg.Fans = append(cfg.Fans, model.FanConfig{
-			ID:             id,
-			Name:           name,
-			PWMPath:        strings.TrimSpace(item["pwm_path"]),
-			RPMPath:        strings.TrimSpace(item["rpm_path"]),
-			EnablePath:     strings.TrimSpace(item["enable_path"]),
-			Chip:           strings.TrimSpace(item["chip"]),
-			Device:         strings.TrimSpace(item["device"]),
-			PWMIndex:       pwmIndex,
-			Mode:           model.FanModeCurve,
-			Source:         "cpu",
-			FallbackPolicy: model.FallbackKeepLast,
-			PWMDeadzone:    &deadzoneVal,
-			StopHysteresis: &hysteresisVal,
-			EmergencyTemp:  &emergencyVal,
+			ID:                id,
+			Name:              name,
+			PWMPath:           strings.TrimSpace(item["pwm_path"]),
+			RPMPath:           strings.TrimSpace(item["rpm_path"]),
+			EnablePath:        strings.TrimSpace(item["enable_path"]),
+			ControlType:       model.FanControlType(strings.TrimSpace(item["control_type"])),
+			ThermalZonePath:   strings.TrimSpace(item["thermal_zone_path"]),
+			ThermalTripPath:   strings.TrimSpace(item["thermal_trip_path"]),
+			ThermalHystPath:   strings.TrimSpace(item["thermal_hyst_path"]),
+			ThermalPolicyPath: strings.TrimSpace(item["thermal_policy_path"]),
+			ThermalZoneType:   strings.TrimSpace(item["thermal_zone_type"]),
+			ThermalPolicy:     strings.TrimSpace(item["thermal_policy"]),
+			ThermalHysteresis: thermalHysteresis,
+			NominalRPM:        nominalRPM,
+			RPMIsNominal:      item["rpm_is_nominal"] == "true",
+			Chip:              strings.TrimSpace(item["chip"]),
+			Device:            strings.TrimSpace(item["device"]),
+			PWMIndex:          pwmIndex,
+			Mode:              model.FanModeCurve,
+			Source:            "cpu",
+			FallbackPolicy:    model.FallbackKeepLast,
+			PWMDeadzone:       &deadzoneVal,
+			StopHysteresis:    &hysteresisVal,
+			EmergencyTemp:     &emergencyVal,
 			Curve: []model.CurvePoint{
 				{Temp: 45, PWM: 120},
 				{Temp: 60, PWM: 180},
 				{Temp: 75, PWM: 255},
 			},
 		})
+		last := &cfg.Fans[len(cfg.Fans)-1]
+		if last.ControlType == "" {
+			last.ControlType = model.FanControlPWM
+		}
+		if last.ControlType == model.FanControlThermalBinary {
+			last.Source = "cpu"
+			last.Curve = defaultThermalBinaryCurve()
+		}
 	}
 
 	if err = c.store.Save(cfg); err != nil {

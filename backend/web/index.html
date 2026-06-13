@@ -164,7 +164,8 @@
         }
 
         input[type="number"] {
-            appearance: textfield;
+            -webkit-appearance: textfield;
+                    appearance: textfield;
             -moz-appearance: textfield;
         }
 
@@ -184,6 +185,8 @@
             transform: translateX(8px);
         }
     </style>
+  <script type="module" crossorigin src="/app/FanControlServer/assets/index-BV6jgwFm.js"></script>
+  <link rel="stylesheet" crossorigin href="/app/FanControlServer/assets/index-Tzz43Y8N.css">
 </head>
 <body class="p-4 md:p-8 max-w-6xl mx-auto">
 <div
@@ -858,7 +861,7 @@
             </button>
         </div>
         <div class="flex flex-col items-center gap-3">
-            <img id="donate-qrcode" src="public/images/donate-qrcode.png" alt="收款码"
+            <img id="donate-qrcode" src="/app/FanControlServer/assets/donate-qrcode-ds5mGJFP.png" alt="收款码"
                  class="w-72 h-72 rounded-xl object-contain bg-white p-2 shadow-md"/>
             <p class="text-xs text-slate-500">扫码支持作者 ❤️</p>
         </div>
@@ -868,6 +871,5 @@
     </div>
 </dialog>
 
-<script type="module" src="/src/main.ts"></script>
 </body>
 </html>

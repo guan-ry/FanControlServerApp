@@ -198,6 +198,39 @@ function pairsToCurve(pairs: number[][]): CurvePoint[] {
         .sort((a, b) => a.temp - b.temp);
 }
 
+
+function isThermalBinary(fan: FanConfig): boolean {
+    return fan.control_type === "thermal_binary";
+}
+
+function thermalBinaryOnTemp(fan: FanConfig): number {
+    const point = [...(fan.curve ?? [])]
+        .sort((a, b) => a.temp - b.temp)
+        .find(p => p.pwm > 0);
+    return Math.max(40, Math.min(75, point?.temp ?? 60));
+}
+
+function thermalBinaryHysteresis(fan: FanConfig, rt?: Telemetry["fans"][number]): number {
+    const value = rt?.thermal_hysteresis ?? fan.thermal_hysteresis;
+    return value != null && value >= 0 ? value : 5;
+}
+
+function thermalBinaryPolicy(fan: FanConfig, rt?: Telemetry["fans"][number]): string {
+    return rt?.thermal_policy || fan.thermal_policy || "step_wise";
+}
+
+function thermalBinaryZoneType(fan: FanConfig, rt?: Telemetry["fans"][number]): string {
+    return rt?.thermal_zone_type || fan.thermal_zone_type || "cpu-thermal";
+}
+
+function thermalBinaryNominalRPM(fan: FanConfig, rt?: Telemetry["fans"][number]): number {
+    return rt?.nominal_rpm || fan.nominal_rpm || 3000;
+}
+
+function compactTemp(value: number): string {
+    return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
 function applyTelemetry(t: Telemetry) {
     telemetry = t;
     $("cpu-temp-text").textContent = formatTemp(t.cpu_temp);
@@ -280,10 +313,48 @@ function runtimeFor(id: string) {
     return telemetry?.fans.find(f => f.id === id);
 }
 
+function syncThermalBinaryCard(card: HTMLElement, fan: FanConfig, rt: Telemetry["fans"][number] | undefined) {
+    const running = (rt?.pwm ?? 0) > 0 || (rt?.rpm ?? 0) > 0;
+    const mode = fan.mode === "manual" && fan.manual_pwm > 0 ? "always" : "curve";
+    const onTemp = thermalBinaryOnTemp(fan);
+    const hysteresis = thermalBinaryHysteresis(fan, rt);
+    const offTemp = Math.max(0, onTemp - hysteresis);
+    const nominalRPM = thermalBinaryNominalRPM(fan, rt);
+
+    const name = card.querySelector<HTMLElement>("[data-fan-name]");
+    if (name) name.textContent = fan.name;
+    const binding = card.querySelector<HTMLElement>("[data-binary-binding]");
+    if (binding) binding.textContent = `${thermalBinaryZoneType(fan, rt)} · ${thermalBinaryPolicy(fan, rt)}`;
+    const iconBg = card.querySelector<HTMLElement>("[data-fan-icon-bg]");
+    const iconEl = card.querySelector<HTMLElement>("[data-fan-icon]");
+    if (iconBg) iconBg.className = `w-9 h-9 rounded-full ${running ? "bg-sky-500/10" : "bg-slate-700"} flex items-center justify-center flex-shrink-0`;
+    if (iconEl) {
+        iconEl.setAttribute("icon", running ? "mdi:fan" : "mdi:fan-off");
+        iconEl.className = running ? "text-sky-400 animate-spin-slow" : "text-slate-500";
+    }
+    const state = card.querySelector<HTMLElement>("[data-binary-state]");
+    if (state) {
+        state.textContent = running ? "已开启" : "已关闭";
+        state.className = `text-xl font-bold ${running ? "text-sky-400" : "text-slate-400"}`;
+    }
+    const nominal = card.querySelector<HTMLElement>("[data-binary-nominal]");
+    if (nominal) nominal.textContent = running ? `标称 ${nominalRPM} RPM` : "内核待命";
+    const onEl = card.querySelector<HTMLElement>("[data-binary-on-temp]");
+    const hystEl = card.querySelector<HTMLElement>("[data-binary-hysteresis]");
+    const offEl = card.querySelector<HTMLElement>("[data-binary-off-temp]");
+    if (onEl) onEl.textContent = `${compactTemp(onTemp)}°C`;
+    if (hystEl) hystEl.textContent = `${compactTemp(hysteresis)}°C`;
+    if (offEl) offEl.textContent = `约 ${compactTemp(offTemp)}°C`;
+    card.querySelectorAll<HTMLElement>("[data-binary-mode]").forEach(button => {
+        const selected = button.dataset.binaryMode === mode;
+        button.className = `px-2.5 py-1 text-xs rounded-md transition-colors ${selected ? "bg-sky-500 text-white shadow-lg" : "text-slate-400 hover:text-white"}`;
+    });
+}
+
 function syncFanCardsFromTelemetryOrRender() {
     const root = $("fan-root");
     const fans = config.fans;
-    const cards = root.querySelectorAll(":scope > [data-fan-id]");
+    const cards = root.querySelectorAll<HTMLElement>(":scope > [data-fan-id]");
     if (fans.length === 0) {
         if (root.innerHTML !== "") root.innerHTML = "";
         return;
@@ -293,14 +364,21 @@ function syncFanCardsFromTelemetryOrRender() {
         return;
     }
     for (let i = 0; i < fans.length; i++) {
-        if ((cards[i] as HTMLElement).dataset.fanId !== fans[i].id) {
+        const card = cards[i];
+        const expectedType = isThermalBinary(fans[i]) ? "thermal_binary" : "pwm";
+        if (card.dataset.fanId !== fans[i].id || card.dataset.controlType !== expectedType) {
             renderFanCards();
             return;
         }
     }
     fans.forEach((fan, idx) => {
-        const card = cards[idx] as HTMLElement;
+        const card = cards[idx];
         const rt = runtimeFor(fan.id);
+        if (isThermalBinary(fan)) {
+            syncThermalBinaryCard(card, fan, rt);
+            return;
+        }
+
         const rpm = rt?.rpm ?? 0;
         const stopped = rpm <= 0 || rt?.status === "stopped";
         const manual = fan.mode === "manual";
@@ -314,9 +392,7 @@ function syncFanCardsFromTelemetryOrRender() {
         }
         const iconBg = card.querySelector("[data-fan-icon-bg]") as HTMLElement | null;
         const iconEl = card.querySelector("[data-fan-icon]") as HTMLElement | null;
-        if (iconBg) {
-            iconBg.className = `w-9 h-9 rounded-full ${stopped ? "bg-slate-700" : "bg-sky-500/10"} flex items-center justify-center flex-shrink-0`;
-        }
+        if (iconBg) iconBg.className = `w-9 h-9 rounded-full ${stopped ? "bg-slate-700" : "bg-sky-500/10"} flex items-center justify-center flex-shrink-0`;
         if (iconEl) {
             iconEl.setAttribute("icon", stopped ? "mdi:fan-off" : "mdi:fan");
             iconEl.className = stopped ? "text-slate-500" : "text-sky-400 animate-spin-slow";
@@ -326,17 +402,11 @@ function syncFanCardsFromTelemetryOrRender() {
         const rpmUnit = card.querySelector("[data-fan-rpm-unit]") as HTMLElement | null;
         if (rpmNum) rpmNum.textContent = String(rpm);
         if (rpmUnit) rpmUnit.textContent = stopped ? "STOPPED" : "RPM";
-        if (rpmRow) {
-            rpmRow.className = `text-xl font-mono font-bold ${stopped ? "text-slate-500 italic" : "text-sky-400"}`;
-        }
+        if (rpmRow) rpmRow.className = `text-xl font-mono font-bold ${stopped ? "text-slate-500 italic" : "text-sky-400"}`;
         const curveBtn = card.querySelector('[data-mode="curve"]') as HTMLElement | null;
         const manualBtn = card.querySelector('[data-mode="manual"]') as HTMLElement | null;
-        if (curveBtn) {
-            curveBtn.className = `px-2.5 py-0.5 text-xs rounded-md ${!manual ? "bg-sky-500 text-white shadow-lg" : "text-slate-400 hover:text-white"}`;
-        }
-        if (manualBtn) {
-            manualBtn.className = `px-2.5 py-0.5 text-xs rounded-md ${manual ? "bg-sky-500 text-white shadow-lg" : "text-slate-400 hover:text-white"}`;
-        }
+        if (curveBtn) curveBtn.className = `px-2.5 py-0.5 text-xs rounded-md ${!manual ? "bg-sky-500 text-white shadow-lg" : "text-slate-400 hover:text-white"}`;
+        if (manualBtn) manualBtn.className = `px-2.5 py-0.5 text-xs rounded-md ${manual ? "bg-sky-500 text-white shadow-lg" : "text-slate-400 hover:text-white"}`;
         const manualUi = card.querySelector("[data-manual-ui]") as HTMLElement | null;
         const autoUi = card.querySelector("[data-auto-ui]") as HTMLElement | null;
         if (manualUi) manualUi.classList.toggle("hidden", !manual);
@@ -349,68 +419,81 @@ function syncFanCardsFromTelemetryOrRender() {
         const pwmDisplay = card.querySelector("[data-fan-pwm-display]") as HTMLElement | null;
         const range = card.querySelector('input[data-field="pwm-range"]') as HTMLInputElement | null;
         if (pwmDisplay) pwmDisplay.textContent = `${pwmVal} / 255`;
-        if (range && document.activeElement !== range) {
-            range.value = String(pwmVal);
-        }
+        if (range && document.activeElement !== range) range.value = String(pwmVal);
     });
+}
+
+function renderThermalBinaryCard(fan: FanConfig, idx: number): string {
+    const rt = runtimeFor(fan.id);
+    const running = (rt?.pwm ?? 0) > 0 || (rt?.rpm ?? 0) > 0;
+    const mode = fan.mode === "manual" && fan.manual_pwm > 0 ? "always" : "curve";
+    const onTemp = thermalBinaryOnTemp(fan);
+    const hysteresis = thermalBinaryHysteresis(fan, rt);
+    const offTemp = Math.max(0, onTemp - hysteresis);
+    const nominalRPM = thermalBinaryNominalRPM(fan, rt);
+    return `
+<div class="bg-slate-900/40 rounded-2xl p-4 border border-sky-500/20" data-fan-idx="${idx}" data-fan-id="${esc(fan.id)}" data-control-type="thermal_binary">
+  <div class="flex justify-between items-start mb-3">
+    <div class="flex items-center gap-2.5 min-w-0">
+      <div data-fan-icon-bg class="w-9 h-9 rounded-full ${running ? "bg-sky-500/10" : "bg-slate-700"} flex items-center justify-center flex-shrink-0">
+        <iconify-icon data-fan-icon class="${running ? "text-sky-400 animate-spin-slow" : "text-slate-500"}" icon="${running ? "mdi:fan" : "mdi:fan-off"}"></iconify-icon>
+      </div>
+      <div class="min-w-0">
+        <div class="flex items-center gap-2 min-w-0">
+          <h4 data-fan-name class="font-bold text-white text-sm truncate">${esc(fan.name)}</h4>
+          <span class="inline-flex flex-shrink-0 items-center rounded-md border border-sky-500/25 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium text-sky-300">开关型风扇</span>
+        </div>
+        <p data-binary-binding class="text-[10px] text-slate-500 font-mono truncate leading-tight">${esc(thermalBinaryZoneType(fan, rt))} · ${esc(thermalBinaryPolicy(fan, rt))}</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-0.5 flex-shrink-0">
+      <button type="button" class="p-1.5 hover:bg-red-900/40 rounded-md text-slate-400 hover:text-red-300" data-act="fan-delete" title="从配置中删除此风扇"><iconify-icon class="text-lg" icon="mdi:delete-outline"></iconify-icon></button>
+      <button type="button" class="p-1.5 hover:bg-slate-700 rounded-md text-slate-400" data-act="fan-settings" title="温控设置"><iconify-icon class="text-lg" icon="mdi:cog-outline"></iconify-icon></button>
+    </div>
+  </div>
+  <div class="flex items-center justify-between mb-3 gap-3">
+    <div>
+      <div data-binary-state class="text-xl font-bold ${running ? "text-sky-400" : "text-slate-400"}">${running ? "已开启" : "已关闭"}</div>
+      <div data-binary-nominal class="text-[10px] text-slate-500 mt-0.5">${running ? `标称 ${nominalRPM} RPM` : "内核待命"}</div>
+    </div>
+    <div class="flex items-center p-0.5 bg-slate-800 rounded-lg">
+      <button type="button" data-binary-mode="curve" class="px-2.5 py-1 text-xs rounded-md transition-colors ${mode === "curve" ? "bg-sky-500 text-white shadow-lg" : "text-slate-400 hover:text-white"}">系统温控</button>
+      <button type="button" data-binary-mode="always" class="px-2.5 py-1 text-xs rounded-md transition-colors ${mode === "always" ? "bg-sky-500 text-white shadow-lg" : "text-slate-400 hover:text-white"}">常开</button>
+    </div>
+  </div>
+  <div class="grid grid-cols-3 gap-2 rounded-xl border border-slate-700/40 bg-slate-800/35 p-2.5 text-center">
+    <div><div class="text-[10px] text-slate-500">开启温度</div><div data-binary-on-temp class="mt-1 text-sm font-mono font-bold text-sky-300">${compactTemp(onTemp)}°C</div></div>
+    <div class="border-x border-slate-700/50"><div class="text-[10px] text-slate-500">固定回差</div><div data-binary-hysteresis class="mt-1 text-sm font-mono font-bold text-slate-200">${compactTemp(hysteresis)}°C</div></div>
+    <div><div class="text-[10px] text-slate-500">预计关闭</div><div data-binary-off-temp class="mt-1 text-sm font-mono font-bold text-slate-200">约 ${compactTemp(offTemp)}°C</div></div>
+  </div>
+  <p class="mt-2 text-[10px] leading-relaxed text-slate-500">由 Linux thermal governor 控制。设备不支持连续 PWM 调速，应用只调整风扇开启温度。</p>
+</div>`;
+}
+
+function renderPWMFanCard(fan: FanConfig, idx: number): string {
+    const rt = runtimeFor(fan.id);
+    const rpm = rt?.rpm ?? 0;
+    const stopped = rpm <= 0 || rt?.status === "stopped";
+    const manual = fan.mode === "manual";
+    const pwmVal = fan.manual_pwm;
+    return `
+<div class="bg-slate-900/40 rounded-2xl p-4 border border-slate-700/50" data-fan-idx="${idx}" data-fan-id="${esc(fan.id)}" data-control-type="pwm">
+  <div class="flex justify-between items-start mb-3">
+    <div class="flex items-center gap-2.5 min-w-0">
+      <div data-fan-icon-bg class="w-9 h-9 rounded-full ${stopped ? "bg-slate-700" : "bg-sky-500/10"} flex items-center justify-center flex-shrink-0"><iconify-icon data-fan-icon class="${stopped ? "text-slate-500" : "text-sky-400 animate-spin-slow"}" icon="${stopped ? "mdi:fan-off" : "mdi:fan"}"></iconify-icon></div>
+      <div class="min-w-0"><h4 data-fan-name class="font-bold text-white text-sm truncate">${esc(fan.name)}</h4><p data-fan-pwm-path class="text-[10px] text-slate-500 font-mono truncate leading-tight" title="${esc(fan.pwm_path)}">${esc(fan.pwm_path || "未配置 PWM")}</p></div>
+    </div>
+    <div class="flex items-center gap-0.5 flex-shrink-0"><button type="button" class="p-1.5 hover:bg-red-900/40 rounded-md text-slate-400 hover:text-red-300" data-act="fan-delete" title="从配置中删除此风扇"><iconify-icon class="text-lg" icon="mdi:delete-outline"></iconify-icon></button><button type="button" class="p-1.5 hover:bg-slate-700 rounded-md text-slate-400" data-act="fan-settings" title="风扇设置"><iconify-icon class="text-lg" icon="mdi:cog-outline"></iconify-icon></button></div>
+  </div>
+  <div class="flex items-center justify-between mb-3"><div data-fan-rpm-row class="text-xl font-mono font-bold ${stopped ? "text-slate-500 italic" : "text-sky-400"}"><span data-fan-rpm>${rpm}</span> <span data-fan-rpm-unit class="text-[10px] text-slate-500 font-normal not-italic">${stopped ? "STOPPED" : "RPM"}</span></div><div class="flex items-center p-0.5 bg-slate-800 rounded-lg"><button type="button" data-mode="curve" class="px-2.5 py-0.5 text-xs rounded-md ${!manual ? "bg-sky-500 text-white shadow-lg" : "text-slate-400 hover:text-white"}">自动</button><button type="button" data-mode="manual" class="px-2.5 py-0.5 text-xs rounded-md ${manual ? "bg-sky-500 text-white shadow-lg" : "text-slate-400 hover:text-white"}">手动</button></div></div>
+  <div class="${manual ? "" : "hidden"}" data-manual-ui><div class="flex justify-between text-[10px] text-slate-500 mb-1.5 uppercase tracking-tighter"><span>PWM 输出</span><span data-fan-pwm-display class="text-sky-400 font-bold">${pwmVal} / 255</span></div><input data-field="pwm-range" class="w-full" type="range" min="0" max="255" value="${pwmVal}" /></div>
+  <div class="${manual ? "hidden" : ""} flex items-center gap-2 text-xs text-slate-400 bg-slate-800/40 py-1.5 px-2 rounded-lg mt-1" data-auto-ui><iconify-icon class="text-sky-400 flex-shrink-0" icon="mdi:chart-bell-curve"></iconify-icon><span class="leading-tight">温度源: </span><span data-fan-source class="leading-tight text-sky-300" data-source="${fan.source}">${getSourceLabel(fan.source)}</span><span class="leading-tight text-slate-500">· 齿轮编辑曲线</span></div>
+</div>`;
 }
 
 function renderFanCards() {
     const root = $("fan-root");
-    const fans = config.fans;
-    root.innerHTML = fans
-        .map((fan, idx) => {
-            const rt = runtimeFor(fan.id);
-            const rpm = rt?.rpm ?? 0;
-            const stopped = rpm <= 0 || rt?.status === "stopped";
-            const manual = fan.mode === "manual";
-            const pwmVal = fan.manual_pwm;
-            return `
-<div class="bg-slate-900/40 rounded-2xl p-4 border border-slate-700/50" data-fan-idx="${idx}" data-fan-id="${esc(fan.id)}">
-  <div class="flex justify-between items-start mb-3">
-    <div class="flex items-center gap-2.5 min-w-0">
-      <div data-fan-icon-bg class="w-9 h-9 rounded-full ${stopped ? "bg-slate-700" : "bg-sky-500/10"} flex items-center justify-center flex-shrink-0">
-        <iconify-icon data-fan-icon class="${stopped ? "text-slate-500" : "text-sky-400 animate-spin-slow"}" icon="${stopped ? "mdi:fan-off" : "mdi:fan"}"></iconify-icon>
-      </div>
-      <div class="min-w-0">
-        <h4 data-fan-name class="font-bold text-white text-sm truncate">${esc(fan.name)}</h4>
-        <p data-fan-pwm-path class="text-[10px] text-slate-500 font-mono truncate leading-tight" title="${esc(fan.pwm_path)}">${esc(fan.pwm_path || "未配置 PWM")}</p>
-      </div>
-    </div>
-    <div class="flex items-center gap-0.5 flex-shrink-0">
-      <button type="button" class="p-1.5 hover:bg-red-900/40 rounded-md text-slate-400 hover:text-red-300 flex-shrink-0" data-act="fan-delete" title="从配置中删除此风扇">
-        <iconify-icon class="text-lg" icon="mdi:delete-outline"></iconify-icon>
-      </button>
-      <button type="button" class="p-1.5 hover:bg-slate-700 rounded-md text-slate-400 flex-shrink-0" data-act="fan-settings" title="风扇设置">
-        <iconify-icon class="text-lg" icon="mdi:cog-outline"></iconify-icon>
-      </button>
-    </div>
-  </div>
-  <div class="flex items-center justify-between mb-3">
-    <div data-fan-rpm-row class="text-xl font-mono font-bold ${stopped ? "text-slate-500 italic" : "text-sky-400"}">
-      <span data-fan-rpm>${rpm}</span> <span data-fan-rpm-unit class="text-[10px] text-slate-500 font-normal not-italic">${stopped ? "STOPPED" : "RPM"}</span>
-    </div>
-    <div class="flex items-center p-0.5 bg-slate-800 rounded-lg">
-      <button type="button" data-mode="curve" class="px-2.5 py-0.5 text-xs rounded-md ${!manual ? "bg-sky-500 text-white shadow-lg" : "text-slate-400 hover:text-white"}">自动</button>
-      <button type="button" data-mode="manual" class="px-2.5 py-0.5 text-xs rounded-md ${manual ? "bg-sky-500 text-white shadow-lg" : "text-slate-400 hover:text-white"}">手动</button>
-    </div>
-  </div>
-  <div class="${manual ? "" : "hidden"}" data-manual-ui>
-    <div class="flex justify-between text-[10px] text-slate-500 mb-1.5 uppercase tracking-tighter">
-      <span>PWM 输出</span>
-      <span data-fan-pwm-display class="text-sky-400 font-bold">${pwmVal} / 255</span>
-    </div>
-    <input data-field="pwm-range" class="w-full" type="range" min="0" max="255" value="${pwmVal}" />
-  </div>
-  <div class="${manual ? "hidden" : ""} flex items-center gap-2 text-xs text-slate-400 bg-slate-800/40 py-1.5 px-2 rounded-lg mt-1" data-auto-ui>
-    <iconify-icon class="text-sky-400 flex-shrink-0" icon="mdi:chart-bell-curve"></iconify-icon>
-    <span class="leading-tight">温度源: </span>
-    <span data-fan-source class="leading-tight text-sky-300" data-source="${fan.source}">${getSourceLabel(fan.source)}</span>
-    <span class="leading-tight text-slate-500">· 齿轮编辑曲线</span>
-  </div>
-</div>`;
-        })
-        .join("");
+    root.innerHTML = config.fans.map((fan, idx) => isThermalBinary(fan) ? renderThermalBinaryCard(fan, idx) : renderPWMFanCard(fan, idx)).join("");
 }
 
 function resolveSourceTemp(source: string): number | undefined {
@@ -997,10 +1080,15 @@ function loadCurveIntoEditor() {
 
 function updateGlobalTuningRowVisibility() {
     const fans = config.fans;
-    const n = fans.length;
-    const allDz = n > 0 && fans.every(f => f.pwm_deadzone != null);
-    const allH = n > 0 && fans.every(f => f.stop_hysteresis != null);
-    const allE = n > 0 && fans.every(f => f.emergency_temp != null);
+    const pwmFans = fans.filter(f => !isThermalBinary(f));
+    const onlyBinary = fans.length > 0 && pwmFans.length === 0;
+    document.getElementById("fan-params-section")?.classList.toggle("hidden", onlyBinary);
+    document.getElementById("binary-global-hint")?.classList.toggle("hidden", !onlyBinary);
+
+    const n = pwmFans.length;
+    const allDz = n > 0 && pwmFans.every(f => f.pwm_deadzone != null);
+    const allH = n > 0 && pwmFans.every(f => f.stop_hysteresis != null);
+    const allE = n > 0 && pwmFans.every(f => f.emergency_temp != null);
     document.getElementById("g-row-deadzone")?.classList.toggle("hidden", allDz);
     document.getElementById("g-row-hysteresis")?.classList.toggle("hidden", allH);
     document.getElementById("g-row-emergency")?.classList.toggle("hidden", allE);
@@ -1328,42 +1416,74 @@ function openFanEditDialogWithLock() {
     });
 }
 
+function updateThermalBinarySettingsPreview(fan: FanConfig) {
+    const input = $("fe-binary-on-temp") as HTMLInputElement;
+    const onTemp = Math.max(40, Math.min(75, Number(input.value) || thermalBinaryOnTemp(fan)));
+    const hysteresis = thermalBinaryHysteresis(fan, runtimeFor(fan.id));
+    $("fe-binary-hysteresis").textContent = `${compactTemp(hysteresis)}°C`;
+    $("fe-binary-off-temp").textContent = `约 ${compactTemp(Math.max(0, onTemp - hysteresis))}°C`;
+}
+
+function setFanSettingsLayout(fan: FanConfig) {
+    const binary = isThermalBinary(fan);
+    $("fe-thermal-binary-panel").classList.toggle("hidden", !binary);
+    $("fe-source-row").classList.toggle("hidden", binary);
+    $("fe-pwm-tuning-panel").classList.toggle("hidden", binary);
+    $("fe-curve-section").classList.toggle("hidden", binary);
+    $("fe-save").textContent = binary ? "保存温控设置" : "保存设置与曲线";
+    const subtitle = document.querySelector<HTMLElement>("#fe-dialog-header p");
+    if (subtitle) subtitle.textContent = binary
+        ? "此设备为开关型风扇，仅设置内核自动温控的开启温度。"
+        : "以下为当前风扇的配置项，修改后请点击底部「保存设置与曲线」写入服务端。";
+}
+
 function openFanSettingsDialog(idx: number) {
     editFanIdx = idx;
     const fan = config.fans[idx];
     if (!fan) return;
     selectedCurveFanId = fan.id;
-    ($("fan-edit-title") as HTMLElement).textContent = `风扇设置 · ${fan.name}`;
+    $("fan-edit-title").textContent = `风扇设置 · ${fan.name}`;
     ($("fe-name") as HTMLInputElement).value = fan.name;
     ($("fe-pwm") as HTMLInputElement).value = fan.pwm_path;
     ($("fe-rpm") as HTMLInputElement).value = fan.rpm_path;
     ($("fe-en") as HTMLInputElement).value = fan.enable_path;
-    setSourceValue(fan.source);
-    closeSourceMenu();
-    originalSourceMode = resolveSourceMode();
-    const isCombo = fan.source.startsWith("combo_avg:") || fan.source.startsWith("combo_max:");
-    const displayMode: SourceMode = isCombo ? "advanced" : originalSourceMode;
-    applySourceModeUI(displayMode);
-    initFanCurveChartShell();
-    loadCurveIntoEditor();
-    const dz = fan.pwm_deadzone ?? config.global.pwm_deadzone;
-    ($("fe-deadzone") as HTMLInputElement).value = String(dz);
-    const hys = fan.stop_hysteresis ?? config.global.stop_hysteresis;
-    ($("fe-hysteresis") as HTMLInputElement).value = String(hys);
-    const em = fan.emergency_temp ?? config.global.emergency_temp;
-    ($("fe-emergency") as HTMLInputElement).value = String(em);
-    const polRaw = fan.fallback_policy;
-    const pol = (polRaw === "stop" || polRaw === "min_pwm" || polRaw === "full_speed" || polRaw === "follow_other") ? polRaw : "keep_last";
-    ($("fe-fallback-policy") as HTMLSelectElement).value = pol;
-    ($("fe-fallback-min-pwm") as HTMLInputElement).value = (fan.fallback_min_pwm != null && fan.fallback_min_pwm > 0) ? String(fan.fallback_min_pwm) : "80";
-    setFallbackSourceValue((fan.fallback_follow_source ?? "").trim() || "cpu");
-    closeFallbackSourceMenu();
-    updateFallbackPolicyVisibility();
+    setFanSettingsLayout(fan);
+
+    if (isThermalBinary(fan)) {
+        const rt = runtimeFor(fan.id);
+        ($("fe-binary-on-temp") as HTMLInputElement).value = String(thermalBinaryOnTemp(fan));
+        $("fe-binary-binding").textContent = `${thermalBinaryZoneType(fan, rt)} · ${thermalBinaryPolicy(fan, rt)}`;
+        updateThermalBinarySettingsPreview(fan);
+    } else {
+        setSourceValue(fan.source);
+        closeSourceMenu();
+        originalSourceMode = resolveSourceMode();
+        const isCombo = fan.source.startsWith("combo_avg:") || fan.source.startsWith("combo_max:");
+        const displayMode: SourceMode = isCombo ? "advanced" : originalSourceMode;
+        applySourceModeUI(displayMode);
+        initFanCurveChartShell();
+        loadCurveIntoEditor();
+        const dz = fan.pwm_deadzone ?? config.global.pwm_deadzone;
+        ($("fe-deadzone") as HTMLInputElement).value = String(dz);
+        const hys = fan.stop_hysteresis ?? config.global.stop_hysteresis;
+        ($("fe-hysteresis") as HTMLInputElement).value = String(hys);
+        const em = fan.emergency_temp ?? config.global.emergency_temp;
+        ($("fe-emergency") as HTMLInputElement).value = String(em);
+        const polRaw = fan.fallback_policy;
+        const pol = (polRaw === "stop" || polRaw === "min_pwm" || polRaw === "full_speed" || polRaw === "follow_other") ? polRaw : "keep_last";
+        ($("fe-fallback-policy") as HTMLSelectElement).value = pol;
+        ($("fe-fallback-min-pwm") as HTMLInputElement).value = (fan.fallback_min_pwm != null && fan.fallback_min_pwm > 0) ? String(fan.fallback_min_pwm) : "80";
+        setFallbackSourceValue((fan.fallback_follow_source ?? "").trim() || "cpu");
+        closeFallbackSourceMenu();
+        updateFallbackPolicyVisibility();
+    }
     openFanEditDialogWithLock();
-    requestAnimationFrame(() => {
-        fanCurveChart?.resize();
-        updateFanCurveGraphic();
-    });
+    if (!isThermalBinary(fan)) {
+        requestAnimationFrame(() => {
+            fanCurveChart?.resize();
+            updateFanCurveGraphic();
+        });
+    }
 }
 
 function readFanFormIntoConfig(): FanConfig | null {
@@ -1374,6 +1494,21 @@ function readFanFormIntoConfig(): FanConfig | null {
     fan.pwm_path = ($("fe-pwm") as HTMLInputElement).value.trim();
     fan.rpm_path = ($("fe-rpm") as HTMLInputElement).value.trim();
     fan.enable_path = ($("fe-en") as HTMLInputElement).value.trim();
+    if (isThermalBinary(fan)) {
+        const onTemp = Math.max(40, Math.min(75, Number(($("fe-binary-on-temp") as HTMLInputElement).value) || 60));
+        fan.source = "cpu";
+        fan.curve = [
+            {temp: onTemp, pwm: 255},
+            {temp: Math.max(80, onTemp + 1), pwm: 255},
+        ];
+        delete fan.pwm_deadzone;
+        delete fan.stop_hysteresis;
+        delete fan.emergency_temp;
+        delete fan.fallback_policy;
+        delete fan.fallback_min_pwm;
+        delete fan.fallback_follow_source;
+        return fan;
+    }
     fan.source = ($("fe-source") as HTMLInputElement).value;
     const dz = ($("fe-deadzone") as HTMLInputElement).value.trim();
     if (dz === "") delete fan.pwm_deadzone;
@@ -1433,6 +1568,28 @@ function bindFanRoot() {
         const gear = t.closest("[data-act=fan-settings]");
         if (gear && row) {
             openFanSettingsDialog(Number(row.dataset.fanIdx));
+            return;
+        }
+        const binaryModeBtn = t.closest("[data-binary-mode]") as HTMLElement | null;
+        if (binaryModeBtn && row) {
+            const id = row.dataset.fanId!;
+            const fan = config.fans.find(f => f.id === id);
+            if (!fan || !isThermalBinary(fan)) return;
+            try {
+                if (binaryModeBtn.dataset.binaryMode === "always") {
+                    fan.mode = "manual";
+                    fan.manual_pwm = 255;
+                    await setFanManualPWM(id, 255);
+                    toast("风扇已设置为常开", "success");
+                } else {
+                    fan.mode = "curve";
+                    await setFanMode(id, "curve");
+                    toast("已恢复系统自动温控", "success");
+                }
+                await refresh();
+            } catch (e) {
+                toast(String(e), "error");
+            }
             return;
         }
         const modeBtn = t.closest("[data-mode]") as HTMLElement | null;
@@ -1651,7 +1808,7 @@ async function runHardwareScan() {
     status.textContent = "正在扫描…";
     try {
         lastScanResults = await fetchScanFans();
-        status.textContent = `共发现 ${lastScanResults?.length ?? 0} 个 PWM 通道`;
+        status.textContent = `共发现 ${lastScanResults?.length ?? 0} 个风扇控制通道`;
         renderScanTable();
     } catch (e) {
         status.textContent = `扫描失败：${String(e)}`;
@@ -1662,14 +1819,21 @@ async function runHardwareScan() {
 function renderScanTable() {
     const tbody = $("scan-fans-tbody") as HTMLElement;
     tbody.innerHTML = lastScanResults.map((s, i) => {
-        const pwmIndex = Number(s.pwm_index)
+        const pwmIndex = Number(s.pwm_index);
         const taken = fanIdentityTaken(s.chip, s.device, pwmIndex);
+        const binary = s.control_type === "thermal_binary";
+        const control = binary
+            ? `<span class="text-sky-300">开关型 · 内核温控</span><div class="text-[10px] text-slate-500 font-mono mt-1 break-all">${esc(s.thermal_zone_type || "cpu-thermal")} · ${esc(s.thermal_policy || "step_wise")}</div>`
+            : `<span class="text-slate-300">连续 PWM</span><div class="text-[10px] text-slate-500 font-mono mt-1 break-all">${esc(s.pwm_path)}</div>`;
+        const state = binary
+            ? `0 / 标称 ${Number(s.nominal_rpm) || 3000} RPM<div class="text-[10px] text-slate-500 mt-1">固定回差 ${Number(s.thermal_hysteresis) || 5}°C</div>`
+            : esc(s.rpm_path || "无转速反馈");
         return `
 <tr class="border-b border-slate-800 ${taken ? "opacity-50" : ""}">
   <td class="p-2 align-top"><input type="checkbox" data-scan-idx="${i}" class="scan-cb rounded border-slate-600" ${taken ? "disabled" : ""} /></td>
   <td class="p-2 align-top text-slate-300">${esc(s.name)}<div class="text-[10px] text-slate-500 font-mono mt-1">${esc(s.id)}</div></td>
-  <td class="p-2 align-top font-mono text-[10px] text-slate-400 break-all">${esc(s.pwm_path)}</td>
-  <td class="p-2 align-top font-mono text-[10px] text-slate-400 break-all">${esc(s.rpm_path || "—")}</td>
+  <td class="p-2 align-top text-xs">${control}</td>
+  <td class="p-2 align-top font-mono text-[10px] text-slate-400 break-all">${state}</td>
 </tr>`;
     }).join("");
 }
@@ -1695,14 +1859,27 @@ async function addScannedFansFromSelection() {
             chip: s.chip,
             device: s.device,
             pwm_index: Number(s.pwm_index),
+            control_type: s.control_type ?? "pwm",
+            thermal_zone_path: s.thermal_zone_path,
+            thermal_trip_path: s.thermal_trip_path,
+            thermal_hyst_path: s.thermal_hyst_path,
+            thermal_policy_path: s.thermal_policy_path,
+            thermal_zone_type: s.thermal_zone_type,
+            thermal_policy: s.thermal_policy,
+            thermal_hysteresis: Number(s.thermal_hysteresis) || undefined,
+            nominal_rpm: Number(s.nominal_rpm) || undefined,
+            rpm_is_nominal: s.rpm_is_nominal,
             mode: "curve",
             source: "cpu",
-            manual_pwm: 120,
-            curve: DEFAULT_CURVE.map(c => ({...c})),
-            // 从全局配置读取当前值，显式写入风扇配置
-            pwm_deadzone: config.global.pwm_deadzone,
-            stop_hysteresis: config.global.stop_hysteresis,
-            emergency_temp: config.global.emergency_temp,
+            manual_pwm: s.control_type === "thermal_binary" ? 255 : 120,
+            curve: s.control_type === "thermal_binary"
+                ? [{temp: 60, pwm: 255}, {temp: 80, pwm: 255}]
+                : DEFAULT_CURVE.map(c => ({...c})),
+            ...(s.control_type === "thermal_binary" ? {} : {
+                pwm_deadzone: config.global.pwm_deadzone,
+                stop_hysteresis: config.global.stop_hysteresis,
+                emergency_temp: config.global.emergency_temp,
+            }),
         };
         newFans.push(fan);
         n++;
@@ -1829,13 +2006,14 @@ async function main() {
     $("fe-save").addEventListener("click", async () => {
         const originalConfig = JSON.parse(JSON.stringify(config));
 
-        syncCurveToConfig();
+        if (editFanIdx !== null && !isThermalBinary(config.fans[editFanIdx])) syncCurveToConfig();
         const fan = readFanFormIntoConfig();
         if (!fan) return;
 
         try {
             await saveConfig(config);
-            await setFanCurve(fan.id, fan.curve);
+            if (isThermalBinary(fan)) await setFanMode(fan.id, fan.mode);
+            else await setFanCurve(fan.id, fan.curve);
             originalSourceMode = null;
             editFanIdx = null;
             syncFanCardsFromTelemetryOrRender();
@@ -1851,6 +2029,11 @@ async function main() {
     });
 
     ($("fe-fallback-policy") as HTMLSelectElement).addEventListener("change", updateFallbackPolicyVisibility);
+    ($("fe-binary-on-temp") as HTMLInputElement).addEventListener("input", () => {
+        if (editFanIdx === null) return;
+        const fan = config.fans[editFanIdx];
+        if (fan && isThermalBinary(fan)) updateThermalBinarySettingsPreview(fan);
+    });
 
     bindFanRoot();
     bindSourceModeSwitcher();

@@ -160,6 +160,9 @@ func migrateConfig(cfg *model.Config) bool {
 	if cfg.Version < 3 {
 		migrateV2ToV3(cfg)
 	}
+	if cfg.Version < 4 {
+		migrateV3ToV4(cfg)
+	}
 
 	cfg.Version = model.CurrentConfigVersion
 	logrus.Infof("[配置] 配置迁移完成 → v%d", model.CurrentConfigVersion)
@@ -251,6 +254,16 @@ func migrateV2ToV3(cfg *model.Config) {
 	logrus.Infof("[配置] v3迁移：已为风扇写入 chip/device/pwm_index 标识")
 }
 
+// migrateV3ToV4 为新增控制类型补默认值。具体 thermal 绑定会在启动扫描时写入。
+func migrateV3ToV4(cfg *model.Config) {
+	for i := range cfg.Fans {
+		if cfg.Fans[i].ControlType == "" {
+			cfg.Fans[i].ControlType = model.FanControlPWM
+		}
+	}
+	logrus.Infof("[配置] v4迁移：已补充风扇控制类型")
+}
+
 func stableFieldsFromPWMPath(pwmPath string) (chip, device string, pwmIndex int) {
 	dir := filepath.Dir(pwmPath)
 	if raw, err := os.ReadFile(filepath.Join(dir, "name")); err == nil {
@@ -301,6 +314,9 @@ func normalizeConfig(cfg *model.Config) {
 	// 每个风扇的独立规范化
 	var cpuMapped, gpuMapped int
 	for i := range cfg.Fans {
+		if cfg.Fans[i].ControlType == "" {
+			cfg.Fans[i].ControlType = model.FanControlPWM
+		}
 		if cfg.Fans[i].Mode == "" {
 			cfg.Fans[i].Mode = model.FanModeCurve
 		}
@@ -309,7 +325,11 @@ func normalizeConfig(cfg *model.Config) {
 		}
 		// 当 CPUSensor/GPUSensor 已设置时，将风扇的 "cpu"/"gpu" 温度源
 		// 映射到具体传感器 ID，使温度源更明确且前端可见
-		if cfg.Global.CPUSensor != "" && cfg.Fans[i].Source == "cpu" {
+		if cfg.Fans[i].ControlType == model.FanControlThermalBinary {
+			// thermal governor 绑定的是 CPU thermal zone，不能安全改用硬盘或其他传感器。
+			cfg.Fans[i].Source = "cpu"
+		}
+		if cfg.Fans[i].ControlType != model.FanControlThermalBinary && cfg.Global.CPUSensor != "" && cfg.Fans[i].Source == "cpu" {
 			cfg.Fans[i].Source = "sensor:" + cfg.Global.CPUSensor
 			cpuMapped++
 		}

@@ -1,0 +1,8 @@
+time="2026-06-13 18:05:08" level=info msg="[日志] 日志文件: logs/app.log"
+time="2026-06-13 18:05:08" level=warning msg="[主程序] 鉴权：独立模式，未启用鉴权，请仅在受信任网络中使用"
+time="2026-06-13 18:05:08" level=info msg="[controller] first-run fan scan found no PWM channels"
+time="2026-06-13 18:05:08" level=info msg="[路由] 开始初始化路由器"
+time="2026-06-13 18:05:08" level=info msg="[主程序] 独立模式，HTTP 监听：127.0.0.1:19637，配置：\"/tmp/fan-ui-runtime/etc/config.json\""
+time="2026-06-13 18:05:08" level=info msg="[主程序] 收到信号 terminated，开始优雅关机…"
+time="2026-06-13 18:05:08" level=info msg="[控制器] 退出行为：将所有风扇设为 PWM=200"
+time="2026-06-13 18:05:08" level=info msg="[主程序] 已退出"

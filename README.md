@@ -47,62 +47,19 @@
 
 ## 构建
 
-需要 Go 1.24+、Node.js 18+ 和 `fnpack`。
-
-### Linux / macOS
-
-默认构建 x86 / amd64 的 URL 入口安装包：
+需要 Go 1.24+ 和 Node.js 18+。
 
 ```bash
+# Linux / macOS
 ./scripts/build.sh
-```
 
-构建 OES Plus / ARM64 安装包：
-
-```bash
-ARCH=arm64 ./scripts/build.sh
-```
-
-构建 iframe 入口安装包：
-
-```bash
-ARCH=amd64 UI_TYPE=iframe ./scripts/build.sh
-ARCH=arm64 UI_TYPE=iframe ./scripts/build.sh
-```
-
-一键构建全部发布包（x86/arm × url/iframe）：
-
-```bash
-./scripts/build-all.sh
-```
-
-架构映射：
-
-| 构建参数 | Go 目标架构 | fnOS manifest platform | 适用设备 |
-| --- | --- | --- | --- |
-| `ARCH=amd64` | `linux/amd64` | `x86` | x86_64 fnOS |
-| `ARCH=arm64` | `linux/arm64` | `arm` | OES Plus / ARM64 fnOS |
-
-> 不建议把 `platform` 固定改为 `all`：安装包内包含 Go 原生二进制，x86 与 ARM 需要分别打包。构建脚本会在打包时临时切换 `manifest` 的 `platform`，打包完成后自动恢复源码文件。
-
-### Windows PowerShell
-
-```powershell
+# Windows PowerShell
 .\scripts\build.ps1
 ```
 
-当前 PowerShell 脚本仍按原逻辑构建 x86 / amd64 包；如需 ARM 包，推荐使用 Linux / macOS 脚本或 GitHub Actions。
-
 脚本自动完成：前端编译 → Go 交叉编译（内嵌前端）→ fnpack 打包。
 
-产物：`dist/*.fpk`，例如：
-
-```text
-FanControlServer-x86-url.fpk
-FanControlServer-x86-iframe.fpk
-FanControlServer-arm-url.fpk
-FanControlServer-arm-iframe.fpk
-```
+产物：`dist/*.fpk`
 
 [//]: # (## 安装)
 

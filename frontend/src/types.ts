@@ -4,6 +4,8 @@ export interface CurvePoint {
 }
 
 /** GET /api/device/scan 单条结果（与后端 hwmon.ScanFans 字段一致） */
+export type FanControlType = "pwm" | "thermal_binary";
+
 export interface ScannedFan {
     id: string;
     name: string;
@@ -12,7 +14,18 @@ export interface ScannedFan {
     enable_path: string;
     chip: string;
     device: string;
-    pwm_index: number
+    pwm_index: number;
+    control_type?: FanControlType;
+    thermal_zone_path?: string;
+    thermal_trip_path?: string;
+    thermal_hyst_path?: string;
+    thermal_policy_path?: string;
+    thermal_zone_type?: string;
+    thermal_policy?: string;
+    thermal_hysteresis?: number;
+    nominal_rpm?: number;
+    cooling_device_path?: string;
+    rpm_is_nominal?: boolean;
 }
 
 export interface FanConfig {
@@ -23,7 +36,17 @@ export interface FanConfig {
     enable_path: string;
     chip: string;
     device: string;
-    pwm_index: number
+    pwm_index: number;
+    control_type?: FanControlType;
+    thermal_zone_path?: string;
+    thermal_trip_path?: string;
+    thermal_hyst_path?: string;
+    thermal_policy_path?: string;
+    thermal_zone_type?: string;
+    thermal_policy?: string;
+    thermal_hysteresis?: number;
+    nominal_rpm?: number;
+    rpm_is_nominal?: boolean;
     mode: "manual" | "curve";
     source: string;
     manual_pwm: number;
@@ -84,6 +107,12 @@ export interface FanRuntime {
     source: string;
     mode: "manual" | "curve";
     target_pwm: number;
+    control_type?: FanControlType;
+    thermal_zone_type?: string;
+    thermal_policy?: string;
+    thermal_hysteresis?: number;
+    nominal_rpm?: number;
+    rpm_is_nominal?: boolean;
 }
 
 export interface HistoryPoint {

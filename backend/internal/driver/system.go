@@ -98,15 +98,8 @@ func (d *SystemDriver) CPUTemp() (*float64, error) {
 		}
 		driverName := strings.TrimSpace(string(nameRaw))
 
-		// 明确是否为 CPU/SoC 温度驱动。x86 常见 coretemp/k10temp/zenpower，
-		// ARM/OES Plus 常见 cpu_thermal/soc_thermal/cpu-thermal。
-		isCPU := driverName == "coretemp" ||
-			driverName == "k10temp" ||
-			driverName == "zenpower" ||
-			driverName == "cpu_thermal" ||
-			driverName == "soc_thermal" ||
-			driverName == "cpu-thermal" ||
-			driverName == "soc-thermal"
+		// 明确是否为 Intel 或 AMD 的官方 CPU 温度驱动
+		isCPU := driverName == "coretemp" || driverName == "k10temp" || driverName == "zenpower"
 
 		// 遍历当前目录下的所有温度通道
 		inputs, _ := filepath.Glob(filepath.Join(dir, "temp*_input"))

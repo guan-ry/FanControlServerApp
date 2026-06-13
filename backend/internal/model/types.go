@@ -9,6 +9,13 @@ const (
 	FanModeCurve  FanMode = "curve"
 )
 
+type FanControlType string
+
+const (
+	FanControlPWM           FanControlType = "pwm"
+	FanControlThermalBinary FanControlType = "thermal_binary"
+)
+
 type FanStatus string
 
 const (
@@ -45,18 +52,30 @@ type CurvePoint struct {
 }
 
 type FanConfig struct {
-	ID         string       `json:"id"`
-	Name       string       `json:"name"`
-	Chip       string       `json:"chip"`
-	Device     string       `json:"device"`
-	PWMIndex   int          `json:"pwm_index"`
-	PWMPath    string       `json:"pwm_path"`
-	RPMPath    string       `json:"rpm_path"`
-	EnablePath string       `json:"enable_path"`
-	Mode       FanMode      `json:"mode"`
-	Source     string       `json:"source"`
-	ManualPWM  int          `json:"manual_pwm"`
-	Curve      []CurvePoint `json:"curve"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Chip       string `json:"chip"`
+	Device     string `json:"device"`
+	PWMIndex   int    `json:"pwm_index"`
+	PWMPath    string `json:"pwm_path"`
+	RPMPath    string `json:"rpm_path"`
+	EnablePath string `json:"enable_path"`
+
+	// ControlType 区分普通 PWM 风扇与由 Linux thermal governor 管理的二态风扇。
+	ControlType       FanControlType `json:"control_type,omitempty"`
+	ThermalZonePath   string         `json:"thermal_zone_path,omitempty"`
+	ThermalTripPath   string         `json:"thermal_trip_path,omitempty"`
+	ThermalHystPath   string         `json:"thermal_hyst_path,omitempty"`
+	ThermalPolicyPath string         `json:"thermal_policy_path,omitempty"`
+	ThermalZoneType   string         `json:"thermal_zone_type,omitempty"`
+	ThermalPolicy     string         `json:"thermal_policy,omitempty"`
+	ThermalHysteresis float64        `json:"thermal_hysteresis,omitempty"`
+	NominalRPM        int            `json:"nominal_rpm,omitempty"`
+	RPMIsNominal      bool           `json:"rpm_is_nominal,omitempty"`
+	Mode              FanMode        `json:"mode"`
+	Source            string         `json:"source"`
+	ManualPWM         int            `json:"manual_pwm"`
+	Curve             []CurvePoint   `json:"curve"`
 	// 以下三项为可选覆盖：nil 表示使用 GlobalConfig 中的对应默认值。
 	PWMDeadzone    *int     `json:"pwm_deadzone,omitempty"`
 	StopHysteresis *float64 `json:"stop_hysteresis,omitempty"`
@@ -83,7 +102,7 @@ type GlobalConfig struct {
 	GPUSensor        string            `json:"gpu_sensor,omitempty"`     // 自定义 GPU 温度传感器 ID
 }
 
-const CurrentConfigVersion = 3
+const CurrentConfigVersion = 4
 
 type Config struct {
 	Version int          `json:"version"`
@@ -103,14 +122,20 @@ type DiskPayload struct {
 }
 
 type FanRuntime struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	PWM       int       `json:"pwm"`
-	RPM       int       `json:"rpm"`
-	Status    FanStatus `json:"status"`
-	Source    string    `json:"source"`
-	Mode      FanMode   `json:"mode"`
-	TargetPWM int       `json:"target_pwm"`
+	ID                string         `json:"id"`
+	Name              string         `json:"name"`
+	PWM               int            `json:"pwm"`
+	RPM               int            `json:"rpm"`
+	Status            FanStatus      `json:"status"`
+	Source            string         `json:"source"`
+	Mode              FanMode        `json:"mode"`
+	TargetPWM         int            `json:"target_pwm"`
+	ControlType       FanControlType `json:"control_type,omitempty"`
+	ThermalZoneType   string         `json:"thermal_zone_type,omitempty"`
+	ThermalPolicy     string         `json:"thermal_policy,omitempty"`
+	ThermalHysteresis float64        `json:"thermal_hysteresis,omitempty"`
+	NominalRPM        int            `json:"nominal_rpm,omitempty"`
+	RPMIsNominal      bool           `json:"rpm_is_nominal,omitempty"`
 }
 
 type Telemetry struct {
