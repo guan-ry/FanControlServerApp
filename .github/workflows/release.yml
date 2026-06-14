@@ -1,119 +1,194 @@
+```yaml
 name: CI/CD - Build and Release
 
 on:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
     tags:
-      - 'v*'
+      - "v*"
   pull_request:
-    branches: [main, master]
+    branches:
+      - main
+      - master
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
-    name: Build (${{ matrix.arch }} - ${{ matrix.ui }})
+    name: Build (${{ matrix.platform }} - ${{ matrix.ui }})
     runs-on: ubuntu-latest
+
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: amd64
-            goarch: amd64
+            platform: x86
+            ui: url
+
+          - arch: amd64
+            platform: x86
+            ui: iframe
+
           - arch: arm64
-            goarch: arm64
-        ui: [url, iframe]
+            platform: arm
+            ui: url
+
+          - arch: arm64
+            platform: arm
+            ui: iframe
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '24'
-          cache: 'npm'
+          node-version: "24"
+          cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.26'
+          go-version-file: backend/go.mod
           cache: true
+          cache-dependency-path: backend/go.sum
 
-      - name: Build Frontend
+      - name: Install fnpack
+        shell: bash
         run: |
-          cd frontend
-          npm install
-          npm run build
+          curl \
+            --fail \
+            --location \
+            --retry 3 \
+            --output /tmp/fnpack \
+            "https://static2.fnnas.com/fnpack/fnpack-1.2.1-linux-amd64"
 
-      - name: Verify frontend output
+          chmod +x /tmp/fnpack
+          sudo install /tmp/fnpack /usr/local/bin/fnpack
+
+          fnpack --help
+
+      - name: Get build version
+        id: version
+        shell: bash
         run: |
-          if [[ ! -f "backend/web/index.html" ]]; then
-            echo "错误: 未找到 backend/web/index.html"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "label=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "label=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sync manifest version from tag
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "错误: 标签必须使用 v1.3.9 这样的格式"
             exit 1
           fi
 
-      - name: Build Backend (${{ matrix.arch }})
-        run: |
-          mkdir -p app/server
-          cd backend
-          go mod tidy
-          GOOS=linux GOARCH=${{ matrix.goarch }} CGO_ENABLED=0             go build -trimpath -ldflags '-s -w'             -o ../app/server/fancontrolserver .
+          sed -E -i \
+            "s/^(version[[:space:]]*=[[:space:]]*).*/\1${VERSION}/" \
+            manifest
 
-      - name: Install fnpack (amd64)
-        run: |
-          curl -L -o fnpack "https://static2.fnnas.com/fnpack/fnpack-1.2.1-linux-amd64"
-          chmod +x fnpack
-          sudo mv fnpack /usr/local/bin/fnpack
-          fnpack --help
-
-      - name: Get version
-        id: get_version
-        run: |
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          else
-            echo "VERSION=dev-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Set UI type (${{ matrix.ui }})
-        run: |
-          if [[ "${{ matrix.ui }}" == "iframe" ]]; then
-            sed -i 's/"type": "url"/"type": "iframe"/' app/ui/config
-          fi
-          cat app/ui/config
+          echo "当前应用版本:"
+          grep -E '^version[[:space:]]*=' manifest
 
       - name: Build FPK
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          UI_TYPE: ${{ matrix.ui }}
         run: |
-          fnpack build
-          mkdir -p dist
-          mv *.fpk "dist/FanControlServer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.ui }}-${{ matrix.arch }}.fpk"
+          chmod +x scripts/build.sh
+          ./scripts/build.sh
+
+      - name: Verify and rename output
+        shell: bash
+        run: |
+          shopt -s nullglob
+
+          files=(
+            dist/*-${{ matrix.platform }}-${{ matrix.ui }}.fpk
+          )
+
+          if (( ${#files[@]} != 1 )); then
+            echo "错误: 预期生成 1 个 FPK，实际生成 ${#files[@]} 个"
+            find dist -maxdepth 1 -type f -print || true
+            exit 1
+          fi
+
+          output="dist/FanControlServer-${{ steps.version.outputs.label }}-${{ matrix.platform }}-${{ matrix.ui }}.fpk"
+
+          mv "${files[0]}" "$output"
+
+          echo "后端二进制信息:"
+          file app/server/fancontrolserver
+
+          echo "生成的安装包:"
+          ls -lh "$output"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: fpk-${{ matrix.ui }}-${{ matrix.arch }}
+          name: fpk-${{ matrix.platform }}-${{ matrix.ui }}
           path: dist/*.fpk
+          if-no-files-found: error
+          retention-days: 14
 
   release:
     name: Publish Release
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build
+
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
+
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
-          path: dist/
+          path: dist
           pattern: fpk-*
           merge-multiple: true
 
+      - name: Verify release files
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(dist/*.fpk)
+
+          if (( ${#files[@]} != 4 )); then
+            echo "错误: 预期获得 4 个 FPK，实际获得 ${#files[@]} 个"
+            find dist -maxdepth 2 -type f -print || true
+            exit 1
+          fi
+
+          echo "准备发布以下安装包:"
+          ls -lh "${files[@]}"
+
+          sha256sum "${files[@]}" > dist/SHA256SUMS
+
       - name: Create Release and Upload Assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
-          files: dist/*.fpk
+          files: |
+            dist/*.fpk
+            dist/SHA256SUMS
           generate_release_notes: true
+          fail_on_unmatched_files: true
+```
