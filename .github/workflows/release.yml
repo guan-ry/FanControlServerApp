@@ -1,4 +1,3 @@
-```yaml
 name: CI/CD - Build and Release
 
 on:
@@ -191,4 +190,3 @@ jobs:
             dist/SHA256SUMS
           generate_release_notes: true
           fail_on_unmatched_files: true
-```
