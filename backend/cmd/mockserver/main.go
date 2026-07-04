@@ -219,9 +219,9 @@ func (s *mockState) buildTelemetry() model.Telemetry {
 		Disks: model.DiskPayload{
 			AvgTemp: &da,
 			Details: []model.DiskInfo{
-				{Name: "sda", Temp: &dskA, Status: model.DiskStatusActive},
-				{Name: "sdb", Status: model.DiskStatusSleep},
-				{Name: "nvme0n1", Temp: &nvm, Status: model.DiskStatusActive},
+				{Name: "sda", Serial: "WDC-WDS500G2B0A-123456", Temp: &dskA, Status: model.DiskStatusActive},
+				{Name: "sdb", Serial: "ST8000NM000A-789012", Status: model.DiskStatusSleep},
+				{Name: "nvme0n1", Serial: "SAMSUNG-MZVLB512-345678", Temp: &nvm, Status: model.DiskStatusActive},
 			},
 		},
 		Fans:      fans,

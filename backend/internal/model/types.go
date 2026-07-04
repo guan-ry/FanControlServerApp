@@ -93,6 +93,7 @@ type Config struct {
 
 type DiskInfo struct {
 	Name   string     `json:"name"`
+	Serial string     `json:"serial,omitempty"`
 	Temp   *float64   `json:"temp,omitempty"`
 	Status DiskStatus `json:"status"`
 }

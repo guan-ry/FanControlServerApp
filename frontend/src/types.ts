@@ -71,6 +71,7 @@ export interface ConfigPayload {
 
 export interface DiskInfo {
     name: string;
+    serial?: string;
     temp?: number;
     status: "active" | "sleep";
 }

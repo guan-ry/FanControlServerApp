@@ -301,7 +301,14 @@
                 <div class="text-3xl font-mono font-bold text-white" id="disk-avg-text">--</div>
                 <div class="text-sm text-slate-400 pb-1">°C</div>
             </div>
-            <div class="text-sm text-slate-500 mb-3" id="disk-avg-hint">硬盘详情</div>
+            <div class="flex items-center justify-between mb-3">
+                <span class="text-sm text-slate-500">硬盘详情</span>
+                <button type="button" id="disk-serial-toggle"
+                        class="p-1 rounded-md text-slate-500 hover:text-sky-400 hover:bg-slate-700/50 transition-colors"
+                        title="显示序列号" aria-label="显示序列号">
+                    <iconify-icon id="disk-serial-toggle-icon" icon="mdi:eye-off" class="text-base"></iconify-icon>
+                </button>
+            </div>
             <div class="mt-4 space-y-2 pt-3 border-t border-slate-700/50">
                 <div class="space-y-2" id="storage-list"></div>
             </div>

@@ -41,13 +41,6 @@ jobs:
             exit 1
           fi
 
-      - name: Build Backend
-        run: |
-          mkdir -p app/server
-          cd backend
-          go mod tidy
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o ../app/server/fancontrolserver .
-
       - name: Install fnpack
         run: |
           curl -L -o fnpack "https://static2.fnnas.com/fnpack/fnpack-1.2.1-linux-amd64"
@@ -59,17 +52,58 @@ jobs:
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
-      - name: Build URL Version
+      # --- 构建 amd64 后端 ---
+      - name: Build Backend (amd64)
         run: |
+          mkdir -p app/server
+          cd backend
+          go mod tidy
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o ../app/server/fancontrolserver .
+
+      # 备份 config 和 manifest（manifest 在项目根目录）
+      - name: Backup UI config and manifest
+        run: |
+          cp app/ui/config app/ui/config.bak
+          cp manifest manifest.bak
+
+      # --- 打包 amd64 ---
+      - name: Build amd64 URL Version
+        run: |
+          cp app/ui/config.bak app/ui/config
+          cp manifest.bak manifest   # platform = x86
           fnpack build
           mkdir -p dist
-          mv *.fpk "dist/FanControlServer-${{ steps.get_version.outputs.VERSION }}-url.fpk"
+          mv *.fpk "dist/FanControlServer-${{ steps.get_version.outputs.VERSION }}-linux-amd64-url.fpk"
 
-      - name: Build Iframe Version
+      - name: Build amd64 Iframe Version
         run: |
+          cp manifest.bak manifest   # platform = x86
           sed -i 's/"type": "url"/"type": "iframe"/' app/ui/config
           fnpack build
-          mv *.fpk "dist/FanControlServer-${{ steps.get_version.outputs.VERSION }}-iframe.fpk"
+          mv *.fpk "dist/FanControlServer-${{ steps.get_version.outputs.VERSION }}-linux-amd64-iframe.fpk"
+
+      # --- 构建 arm64 后端 ---
+      - name: Build Backend (arm64)
+        run: |
+          cd backend
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o ../app/server/fancontrolserver .
+
+      # --- 打包 arm64（platform 设为 arm） ---
+      - name: Build arm64 URL Version
+        run: |
+          cp app/ui/config.bak app/ui/config   # url 模式
+          cp manifest.bak manifest
+          sed -i 's/^platform\s*=.*/platform = arm/' manifest
+          fnpack build
+          mv *.fpk "dist/FanControlServer-${{ steps.get_version.outputs.VERSION }}-linux-arm64-url.fpk"
+
+      - name: Build arm64 Iframe Version
+        run: |
+          cp manifest.bak manifest
+          sed -i 's/^platform\s*=.*/platform = arm/' manifest
+          sed -i 's/"type": "url"/"type": "iframe"/' app/ui/config
+          fnpack build
+          mv *.fpk "dist/FanControlServer-${{ steps.get_version.outputs.VERSION }}-linux-arm64-iframe.fpk"
 
       - name: Create Release and Upload Assets
         uses: softprops/action-gh-release@v2

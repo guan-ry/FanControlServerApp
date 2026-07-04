@@ -13,7 +13,7 @@ import {
     setFanMode,
     setGlobalConfig,
 } from "./api";
-import type {ConfigPayload, CurvePoint, FanConfig, GlobalConfig, ScannedFan, Telemetry} from "./types";
+import type {ConfigPayload, CurvePoint, DiskInfo, FanConfig, GlobalConfig, ScannedFan, Telemetry} from "./types";
 
 const DEFAULT_CURVE: CurvePoint[] = [
     {temp: 45, pwm: 120},
@@ -129,6 +129,85 @@ function esc(s: string): string {
         .replace(/'/g, "&#39;");
 }
 
+const DISK_SERIAL_VISIBLE_KEY = "fancontrol_show_disk_serial";
+
+function loadDiskSerialVisible(): boolean {
+    try {
+        const v = localStorage.getItem(DISK_SERIAL_VISIBLE_KEY);
+        if (v === null) {
+            return false;
+        }
+        return v === "1";
+    } catch {
+        return false;
+    }
+}
+
+let showDiskSerial = loadDiskSerialVisible();
+
+function updateDiskSerialToggleIcon() {
+    const btn = $("disk-serial-toggle");
+    const icon = $("disk-serial-toggle-icon");
+    icon.setAttribute("icon", showDiskSerial ? "mdi:eye" : "mdi:eye-off");
+    const label = showDiskSerial ? "隐藏序列号" : "显示序列号";
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
+    btn.classList.toggle("text-sky-400", showDiskSerial);
+    btn.classList.toggle("text-slate-500", !showDiskSerial);
+}
+
+function setDiskSerialVisible(visible: boolean) {
+    showDiskSerial = visible;
+    try {
+        localStorage.setItem(DISK_SERIAL_VISIBLE_KEY, visible ? "1" : "0");
+    } catch { /* ignore */ }
+    updateDiskSerialToggleIcon();
+    $("storage-list").innerHTML = "";
+    renderStorageList();
+    syncFanCardsFromTelemetryOrRender();
+    refreshOpenSourceDisplays();
+}
+
+function refreshOpenSourceDisplays() {
+    const feInput = document.getElementById("fe-source") as HTMLInputElement | null;
+    if (feInput?.value) {
+        setSourceValue(feInput.value);
+    }
+    const fbInput = document.getElementById("fe-fb-source") as HTMLInputElement | null;
+    if (fbInput?.value) {
+        setFallbackSourceValue(fbInput.value);
+    }
+    applySourceModeUI(resolveSourceMode());
+}
+
+function maskDiskSerial(_serial: string): string {
+    return "*".repeat(8);
+}
+
+function formatDiskSerialDisplay(serial: string): string {
+    if (!showDiskSerial) {
+        return maskDiskSerial(serial);
+    }
+    return serial;
+}
+
+function formatDiskLabel(disk: Pick<DiskInfo, "name" | "serial">): string {
+    if (!disk.serial) {
+        return disk.name;
+    }
+    return `${disk.name} · ${formatDiskSerialDisplay(disk.serial)}`;
+}
+
+function renderDiskNameHtml(disk: Pick<DiskInfo, "name" | "serial">): string {
+    const name = esc(disk.name);
+    if (!disk.serial) {
+        return `<iconify-icon icon="mdi:harddisk" class="shrink-0"></iconify-icon><span class="font-mono">${name}</span>`;
+    }
+    const serialText = esc(formatDiskSerialDisplay(disk.serial));
+    const title = showDiskSerial ? esc(disk.serial) : "序列号已隐藏";
+    return `<iconify-icon icon="mdi:harddisk" class="shrink-0"></iconify-icon><span class="font-mono truncate min-w-0" title="${title}">${name} · <span class="text-slate-500">${serialText}</span></span>`;
+}
+
 type ToastKind = "success" | "error" | "info";
 
 const TOAST_ICON: Record<ToastKind, string> = {
@@ -238,8 +317,8 @@ function renderStorageList() {
     if (list.children.length !== d.length) {
         list.innerHTML = d
             .map(disk => `
-      <div class="flex justify-between items-center text-xs" data-disk-name="${esc(disk.name)}">
-        <span class="text-slate-400 flex items-center gap-2"><iconify-icon icon="mdi:harddisk"></iconify-icon> ${esc(disk.name)}</span>
+      <div class="flex justify-between items-center gap-2 text-xs" data-disk-name="${esc(disk.name)}">
+        <span class="text-slate-400 flex items-center gap-2 min-w-0">${renderDiskNameHtml(disk)}</span>
         <span class="disk-temp font-mono">${
                 disk.status === "sleep" ? '<span class="text-slate-500 uppercase">休眠</span>' : `<span class="text-emerald-400">${formatTemp(disk.temp)}<span class="text-slate-500 text-xs">°C</span></span>`
             }</span>
@@ -252,8 +331,8 @@ function renderStorageList() {
         if (item.dataset.diskName !== disk.name) {
             list.innerHTML = d
                 .map(disk => `
-        <div class="flex justify-between items-center text-xs" data-disk-name="${esc(disk.name)}">
-          <span class="text-slate-400 flex items-center gap-2"><iconify-icon icon="mdi:harddisk"></iconify-icon> ${esc(disk.name)}</span>
+        <div class="flex justify-between items-center gap-2 text-xs" data-disk-name="${esc(disk.name)}">
+          <span class="text-slate-400 flex items-center gap-2 min-w-0">${renderDiskNameHtml(disk)}</span>
           <span class="disk-temp font-mono">${
                     disk.status === "sleep" ? '<span class="text-slate-500 uppercase">休眠</span>' : `<span class="text-emerald-400">${formatTemp(disk.temp)}<span class="text-slate-500 text-xs">°C</span></span>`
                 }</span>
@@ -484,7 +563,7 @@ function collectSourceGroups(mode: "simple" | "advanced"): SourceGroup[] {
             {v: cpuSensor ? `sensor:${cpuSensor}` : "cpu", name: cpuLabel},
             {v: gpuSensor ? `sensor:${gpuSensor}` : "gpu", name: gpuLabel},
         ];
-        disks.forEach(d => items.push({v: `disk:${d.name}`, name: `硬盘 ${d.name}`, sleep: d.status === "sleep"}));
+        disks.forEach(d => items.push({v: `disk:${d.name}`, name: `硬盘 ${formatDiskLabel(d)}`, sleep: d.status === "sleep"}));
         items.push({v: "disk_avg", name: "硬盘平均"});
         items.push({v: "disk_max", name: "硬盘最大"});
         items.forEach(it => {
@@ -646,7 +725,7 @@ function getSourceLabel(source: string): string {
     if (source.startsWith("disk:")) {
         const name = source.slice(5);
         const disk = disks.find(d => d.name === name);
-        return disk ? `硬盘 ${name}` : name;
+        return disk ? `硬盘 ${formatDiskLabel(disk)}` : name;
     }
     if (source.startsWith("sensor:")) {
         const id = source.slice(7);
@@ -1861,6 +1940,8 @@ async function main() {
     bindCollapsible("cpu-gpu-sensor-toggle", "cpu-gpu-sensor-panel", "cpu-gpu-sensor-chevron");
     bindCPUGPUSensorMenus();
     initHistoryChart();
+    updateDiskSerialToggleIcon();
+    $("disk-serial-toggle").addEventListener("click", () => setDiskSerialVisible(!showDiskSerial));
 
     await refresh();
     const legacy = config.fans.filter(f => !f.chip);
