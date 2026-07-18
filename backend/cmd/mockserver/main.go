@@ -21,23 +21,27 @@ import (
 	"github.com/gorilla/websocket"
 
 	"fancontrolserver/internal/model"
+	"fancontrolserver/internal/service"
+	"fancontrolserver/internal/version"
 )
 
 // ============== 状态 ==============
 
 type mockState struct {
-	mu    sync.RWMutex
-	cfg   model.Config
-	tick  int
-	start time.Time
-	subs  map[chan model.Telemetry]struct{}
+	mu      sync.RWMutex
+	cfg     model.Config
+	tick    int
+	start   time.Time
+	subs    map[chan model.Telemetry]struct{}
+	history *service.HistoryStore
 }
 
-func newMockState() *mockState {
+func newMockState(history *service.HistoryStore) *mockState {
 	return &mockState{
-		cfg:   defaultConfig(),
-		start: time.Now(),
-		subs:  map[chan model.Telemetry]struct{}{},
+		cfg:     defaultConfig(),
+		start:   time.Now(),
+		subs:    map[chan model.Telemetry]struct{}{},
+		history: history,
 	}
 }
 
@@ -227,11 +231,6 @@ func (s *mockState) buildTelemetry() model.Telemetry {
 		Fans:      fans,
 		Sensors:   sensors,
 		Timestamp: time.Now(),
-		History: model.HistorySeries{
-			CPUTemp: []model.HistoryPoint{},
-			GPUTemp: []model.HistoryPoint{},
-			DiskAvg: []model.HistoryPoint{},
-		},
 	}
 }
 
@@ -242,6 +241,9 @@ func (s *mockState) loop() {
 	defer t.Stop()
 	for range t.C {
 		tel := s.buildTelemetry()
+		if s.history != nil {
+			s.history.RecordSnapshot(tel)
+		}
 		s.mu.RLock()
 		for ch := range s.subs {
 			select {
@@ -256,20 +258,35 @@ func (s *mockState) loop() {
 // ============== HTTP 路由 ==============
 
 func main() {
-	state := newMockState()
+	history, err := service.NewHistoryStore(":memory:")
+	if err != nil {
+		panic(err)
+	}
+	defer func() { _ = history.Close() }()
+
+	state := newMockState(history)
 	go state.loop()
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
 	r.GET("/api/auth/status", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"gateway_mode": false})
+		c.JSON(http.StatusOK, gin.H{"gateway_mode": false, "version": version.Version})
 	})
 
 	api := r.Group("/api")
 
 	api.GET("/device/info", func(c *gin.Context) {
 		c.JSON(http.StatusOK, state.buildTelemetry())
+	})
+
+	api.GET("/device/history", func(c *gin.Context) {
+		q, err := service.ParseHistoryQuery(c.Query("range"), c.Query("from"), c.Query("to"), time.Now())
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, history.Query(q))
 	})
 
 	api.GET("/device/scan", func(c *gin.Context) {

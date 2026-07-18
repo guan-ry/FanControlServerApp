@@ -20,6 +20,7 @@ import (
 	"fancontrolserver/internal/api"
 	"fancontrolserver/internal/logging"
 	"fancontrolserver/internal/service"
+	"fancontrolserver/internal/version"
 )
 
 //go:embed web
@@ -84,6 +85,7 @@ func prepareUnixSocket(path string) (net.Listener, error) {
 
 func main() {
 	logging.Init()
+	logrus.Infof("[主程序] FanControlServer v%s", version.Version)
 	gin.SetMode(gin.ReleaseMode)
 
 	webFS, err := fs.Sub(staticFS, "web")
@@ -95,6 +97,11 @@ func main() {
 	store, err := service.NewStore(cfgPath)
 	if err != nil {
 		logrus.Fatalf("[主程序] 加载配置失败：%v", err)
+	}
+	historyPath := filepath.Join(logging.DataDir(), "history.db")
+	historyStore, err := service.NewHistoryStore(historyPath)
+	if err != nil {
+		logrus.Fatalf("[主程序] 加载温度历史失败：%v", err)
 	}
 	if logLevel := store.Get().Global.LogLevel; logLevel != "" {
 		logging.SetLevel(logLevel)
@@ -111,7 +118,7 @@ func main() {
 		logrus.Warn("[主程序] 鉴权：独立模式，未启用鉴权，请仅在受信任网络中使用")
 	}
 
-	controller := service.NewController(store)
+	controller := service.NewController(store, historyStore)
 	if err = controller.Start(); err != nil {
 		logrus.Fatalf("[主程序] 启动控制器失败：%v", err)
 	}

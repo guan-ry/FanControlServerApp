@@ -36,6 +36,7 @@ go.work.sum
 # ===== 后端本地运行时数据 =====
 backend/configs/
 backend/logs/
+backend/data/
 
 # ===== 构建脚本旧产物 =====
 dist/

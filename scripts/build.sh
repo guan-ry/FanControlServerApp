@@ -25,7 +25,9 @@ mkdir -p "${ROOT}/app/target"
 
 step "交叉编译后端 (linux/amd64) -> app/server/fancontrolserver"
 mkdir -p "${ROOT}/app/server"
-( cd "${ROOT}/backend" && go mod tidy && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o "${ROOT}/app/server/fancontrolserver" . )
+APP_VERSION="$(grep -E '^[[:space:]]*version[[:space:]]*=' "${ROOT}/manifest" | head -1 | sed 's/.*=[[:space:]]*//')"
+LDFLAGS="-s -w -X fancontrolserver/internal/version.Version=${APP_VERSION}"
+( cd "${ROOT}/backend" && go mod tidy && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "${LDFLAGS}" -o "${ROOT}/app/server/fancontrolserver" . )
 
 step "打包 fnOS 应用 (fnpack build)"
 # 在项目根目录下打包（不指定 -d，因为 -d 是源代码目录，不是输出目录）

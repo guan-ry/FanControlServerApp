@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"fancontrolserver/internal/logging"
 	"fancontrolserver/internal/model"
 	"fancontrolserver/internal/service"
 
@@ -72,6 +73,7 @@ func NewRouter(staticFS fs.FS, controller *service.Controller, store *service.St
 	apiRead := router.Group("/app/FanControlServer/api")
 	{
 		apiRead.GET("/device/info", h.deviceInfo)
+		apiRead.GET("/device/history", h.deviceHistory)
 		apiRead.GET("/device/scan", h.deviceScan)
 		apiRead.GET("/fan/config", h.fanConfig)
 		apiRead.GET("/ws", h.ws)
@@ -147,6 +149,15 @@ func abortWithError(c *gin.Context, status int, err error) bool {
 
 func (h *handler) deviceInfo(c *gin.Context) {
 	c.JSON(http.StatusOK, h.controller.Telemetry())
+}
+
+func (h *handler) deviceHistory(c *gin.Context) {
+	series, err := h.controller.QueryHistory(c.Query("range"), c.Query("from"), c.Query("to"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, series)
 }
 
 func (h *handler) deviceScan(c *gin.Context) {
@@ -236,6 +247,9 @@ func (h *handler) setGlobalConfig(c *gin.Context) {
 	cfg.Global = req
 	if abortWithError(c, http.StatusInternalServerError, h.controller.SaveConfig(cfg)) {
 		return
+	}
+	if req.LogLevel != "" {
+		logging.SetLevel(req.LogLevel)
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

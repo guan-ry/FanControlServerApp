@@ -3,17 +3,17 @@ import "./style.css";
 import * as echarts from "echarts";
 import {
     fetchConfig,
+    fetchHistory,
     fetchInfo,
     fetchScanFans,
     initAuthMode,
     removeFan,
     saveConfig,
-    setFanCurve,
     setFanManualPWM,
     setFanMode,
     setGlobalConfig,
 } from "./api";
-import type {ConfigPayload, CurvePoint, DiskInfo, FanConfig, GlobalConfig, ScannedFan, Telemetry} from "./types";
+import type {ConfigPayload, CurvePoint, DiskInfo, FanConfig, GlobalConfig, HistoryPoint, HistoryRange, HistorySeries, ScannedFan, Telemetry} from "./types";
 
 const DEFAULT_CURVE: CurvePoint[] = [
     {temp: 45, pwm: 120},
@@ -22,6 +22,7 @@ const DEFAULT_CURVE: CurvePoint[] = [
 ];
 
 let config: ConfigPayload = {
+    version: 3,
     fans: [],
     global: {
         pwm_deadzone: 5,
@@ -40,7 +41,144 @@ let fanCurveChartBound = false;
 let curveData: number[][] = [];
 let selectedCurveFanId = "";
 let historyChart: echarts.ECharts | null = null;
-let lastChartUpdate = 0;
+let historyChartResizeRaf = 0;
+let historyChartResizeObserver: IntersectionObserver | null = null;
+let historyData: HistorySeries | null = null;
+let historyRange: HistoryRange = "1h";
+let historyRefreshTimer: number | null = null;
+let historySpanHours = 1;
+let historyTimeMin = 0;
+let historyTimeMax = 0;
+type HistoryView = "temp" | "fan";
+let historyView: HistoryView = "temp";
+const historyRangeOptions: HistoryRange[] = ["1h", "6h", "24h", "7d", "custom"];
+const historySensorSelected = new Set<string>();
+const historyFanSelected = new Set<string>();
+
+function syncHistoryPrefsToConfig() {
+    config.global.history_range = historyRange;
+    config.global.history_sensors = [...historySensorSelected];
+    config.global.history_fans = [...historyFanSelected];
+    if (historyRange === "custom") {
+        const fromEl = document.getElementById("history-from") as HTMLInputElement | null;
+        const toEl = document.getElementById("history-to") as HTMLInputElement | null;
+        if (fromEl?.value) config.global.history_from = fromEl.value;
+        if (toEl?.value) config.global.history_to = toEl.value;
+    }
+}
+
+async function persistHistoryPrefs() {
+    syncHistoryPrefsToConfig();
+    try {
+        await setGlobalConfig(config.global);
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+function applyHistoryPrefsFromConfig() {
+    const g = config.global;
+    if (g.history_range && historyRangeOptions.includes(g.history_range)) {
+        historyRange = g.history_range;
+    } else {
+        historyRange = "1h";
+    }
+
+    const hiddenSensors = new Set(config.global.sensor_hidden ?? []);
+    const knownSensors = new Set((telemetry?.sensors ?? []).map(s => s.id));
+    historySensorSelected.clear();
+    if (g.history_sensors == null) {
+        // 从未配置：不强行勾选扩展传感器
+    } else {
+        for (const id of g.history_sensors) {
+            if (hiddenSensors.has(id)) continue;
+            if (knownSensors.size > 0 && !knownSensors.has(id)) continue;
+            historySensorSelected.add(id);
+        }
+    }
+
+    historyFanSelected.clear();
+    if (g.history_fans == null) {
+        // 从未配置：默认勾选前 5 个
+        for (const fan of (config.fans ?? []).slice(0, 5)) {
+            historyFanSelected.add(fan.id);
+        }
+    } else {
+        // 含 []：尊重用户选择（全不选也保留）
+        const knownFanIds = new Set((config.fans ?? []).map(f => f.id));
+        for (const id of g.history_fans) {
+            if (knownFanIds.has(id)) historyFanSelected.add(id);
+        }
+    }
+
+    const rangeEl = document.getElementById("history-range") as HTMLSelectElement | null;
+    if (rangeEl) rangeEl.value = historyRange;
+
+    const panel = document.getElementById("history-custom-panel");
+    panel?.classList.toggle("hidden", historyRange !== "custom");
+
+    const fromEl = document.getElementById("history-from") as HTMLInputElement | null;
+    const toEl = document.getElementById("history-to") as HTMLInputElement | null;
+    if (g.history_from && fromEl) fromEl.value = g.history_from;
+    if (g.history_to && toEl) toEl.value = g.history_to;
+
+    setupHistoryRefreshTimer();
+    updateHistorySensorsButtonLabel();
+    updateHistoryFansButtonLabel();
+    applyHistoryViewUI();
+    renderHistoryLegend();
+}
+
+const HISTORY_COLOR_CPU = "#38bdf8";
+const HISTORY_COLOR_GPU = "#f97316";
+const HISTORY_COLOR_DISK = "#10b981";
+
+/** 与温度页默认系列（CPU/GPU/硬盘）同序，其后接扩展传感器色板 */
+const HISTORY_SERIES_COLORS = [
+    HISTORY_COLOR_CPU,
+    HISTORY_COLOR_GPU,
+    HISTORY_COLOR_DISK,
+    "#ef4444", // red
+    "#eab308", // yellow
+    "#d946ef", // fuchsia
+    "#6366f1", // indigo
+    "#84cc16", // lime
+    "#14b8a6", // teal
+    "#ec4899", // pink
+    "#a855f7", // purple
+    "#facc15", // amber
+    "#e11d48", // rose
+    "#22c55e", // green
+    "#0891b2", // cyan-600
+];
+
+const HISTORY_CHART_GRID = {left: 8, right: 16, top: 16, bottom: 20, containLabel: true};
+
+const HISTORY_CHART_ANIM = {animation: false, animationDurationUpdate: 0};
+
+const HISTORY_X_AXIS_BASE = {
+    type: "time" as const,
+    axisLine: {lineStyle: {color: "rgba(148,163,184,0.4)"}},
+    axisTick: {alignWithLabel: true},
+    axisLabel: {
+        showMinLabel: true,
+        showMaxLabel: true,
+        hideOverlap: false,
+        margin: 10,
+    },
+};
+
+const HISTORY_Y_AXIS_BASE = {
+    type: "value" as const,
+    axisLine: {lineStyle: {color: "rgba(148,163,184,0.4)"}},
+    axisTick: {show: false},
+    splitLine: {
+        show: true,
+        showMinLine: false,
+        showMaxLine: false,
+        lineStyle: {color: "rgba(148,163,184,0.12)"},
+    },
+};
 
 // 圆环周长 (2 * PI * 15.5 ≈ 97.4)
 const RING_CIRCUMFERENCE = 97.4;
@@ -198,6 +336,41 @@ function formatDiskLabel(disk: Pick<DiskInfo, "name" | "serial">): string {
     return `${disk.name} · ${formatDiskSerialDisplay(disk.serial)}`;
 }
 
+/** 配置中的磁盘温度源：有序列号则用 serial，否则退回设备名 */
+function diskSourceValue(disk: Pick<DiskInfo, "name" | "serial">): string {
+    const serial = disk.serial?.trim();
+    return serial ? `disk:${serial}` : `disk:${disk.name}`;
+}
+
+function findDiskBySourceKey(key: string): DiskInfo | undefined {
+    const k = key.trim();
+    if (!k) return undefined;
+    return (telemetry?.disks?.details ?? []).find(
+        d => (d.serial?.trim() === k) || d.name === k,
+    );
+}
+
+function diskSourcesReferSame(a: string, b: string): boolean {
+    if (a === b) return true;
+    if (!a.startsWith("disk:") || !b.startsWith("disk:")) return false;
+    const da = findDiskBySourceKey(a.slice(5));
+    const db = findDiskBySourceKey(b.slice(5));
+    return !!(da && db && da.name === db.name);
+}
+
+function sourcesMatch(a: string, b: string): boolean {
+    if (a === b) return true;
+    return diskSourcesReferSame(a, b);
+}
+
+function isComboKeySelected(selected: Set<string>, value: string): boolean {
+    if (selected.has(value)) return true;
+    for (const k of selected) {
+        if (diskSourcesReferSame(k, value)) return true;
+    }
+    return false;
+}
+
 function renderDiskNameHtml(disk: Pick<DiskInfo, "name" | "serial">): string {
     const name = esc(disk.name);
     if (!disk.serial) {
@@ -299,11 +472,8 @@ function applyTelemetry(t: Telemetry) {
     syncFanCardsFromTelemetryOrRender();
     renderStorageList();
     updateSensorMgrTemps();
-    const now = Date.now();
-    if (now - lastChartUpdate >= 2000) {
-        lastChartUpdate = now;
-        updateHistoryChart();
-    }
+    refreshHistorySelectorsFromTelemetry();
+    scheduleHistoryChartResize();
 }
 
 function renderStorageList() {
@@ -359,6 +529,12 @@ function runtimeFor(id: string) {
     return telemetry?.fans.find(f => f.id === id);
 }
 
+/** PWM 0–255 → 转速旁显示的百分比 */
+function fanPWMPercent(pwm: number | null | undefined): number {
+    if (pwm == null || !Number.isFinite(pwm) || pwm < 0) return 0;
+    return Math.round(Math.min(255, pwm) / 255 * 100);
+}
+
 function syncFanCardsFromTelemetryOrRender() {
     const root = $("fan-root");
     const fans = config.fans;
@@ -384,6 +560,7 @@ function syncFanCardsFromTelemetryOrRender() {
         const stopped = rpm <= 0 || rt?.status === "stopped";
         const manual = fan.mode === "manual";
         const pwmVal = fan.manual_pwm;
+        const pwmPct = fanPWMPercent(rt?.pwm ?? (manual ? fan.manual_pwm : undefined));
         const fanName = card.querySelector("[data-fan-name]") as HTMLElement | null;
         if (fanName) fanName.textContent = fan.name;
         const pwmPath = card.querySelector("[data-fan-pwm-path]") as HTMLElement | null;
@@ -403,10 +580,15 @@ function syncFanCardsFromTelemetryOrRender() {
         const rpmRow = card.querySelector("[data-fan-rpm-row]") as HTMLElement | null;
         const rpmNum = card.querySelector("[data-fan-rpm]") as HTMLElement | null;
         const rpmUnit = card.querySelector("[data-fan-rpm-unit]") as HTMLElement | null;
+        const rpmPct = card.querySelector("[data-fan-pwm-pct]") as HTMLElement | null;
         if (rpmNum) rpmNum.textContent = String(rpm);
         if (rpmUnit) rpmUnit.textContent = stopped ? "STOPPED" : "RPM";
+        if (rpmPct) {
+            rpmPct.textContent = ` · ${pwmPct}%`;
+            rpmPct.classList.toggle("hidden", stopped);
+        }
         if (rpmRow) {
-            rpmRow.className = `text-xl font-mono font-bold ${stopped ? "text-slate-500 italic" : "text-sky-400"}`;
+            rpmRow.className = `text-2xl font-mono font-bold ${stopped ? "text-slate-500 italic" : "text-sky-400"}`;
         }
         const curveBtn = card.querySelector('[data-mode="curve"]') as HTMLElement | null;
         const manualBtn = card.querySelector('[data-mode="manual"]') as HTMLElement | null;
@@ -444,6 +626,7 @@ function renderFanCards() {
             const stopped = rpm <= 0 || rt?.status === "stopped";
             const manual = fan.mode === "manual";
             const pwmVal = fan.manual_pwm;
+            const pwmPct = fanPWMPercent(rt?.pwm ?? (manual ? fan.manual_pwm : undefined));
             return `
 <div class="bg-slate-900/40 rounded-2xl p-4 border border-slate-700/50" data-fan-idx="${idx}" data-fan-id="${esc(fan.id)}">
   <div class="flex justify-between items-start mb-3">
@@ -466,8 +649,8 @@ function renderFanCards() {
     </div>
   </div>
   <div class="flex items-center justify-between mb-3">
-    <div data-fan-rpm-row class="text-xl font-mono font-bold ${stopped ? "text-slate-500 italic" : "text-sky-400"}">
-      <span data-fan-rpm>${rpm}</span> <span data-fan-rpm-unit class="text-[10px] text-slate-500 font-normal not-italic">${stopped ? "STOPPED" : "RPM"}</span>
+    <div data-fan-rpm-row class="text-2xl font-mono font-bold ${stopped ? "text-slate-500 italic" : "text-sky-400"}">
+      <span data-fan-rpm>${rpm}</span> <span data-fan-rpm-unit class="text-sm text-slate-500 font-normal not-italic">${stopped ? "STOPPED" : "RPM"}</span><span data-fan-pwm-pct class="text-base text-slate-400 font-semibold not-italic ${stopped ? "hidden" : ""}"> · ${pwmPct}%</span>
     </div>
     <div class="flex items-center p-0.5 bg-slate-800 rounded-lg">
       <button type="button" data-mode="curve" class="px-2.5 py-0.5 text-xs rounded-md ${!manual ? "bg-sky-500 text-white shadow-lg" : "text-slate-400 hover:text-white"}">自动</button>
@@ -513,8 +696,7 @@ function resolveSourceTemp(source: string): number | undefined {
         return all.length ? Math.max(...all) : undefined;
     }
     if (source.startsWith("disk:")) {
-        const name = source.slice(5);
-        return (t.disks?.details ?? []).find(d => d.name === name)?.temp;
+        return findDiskBySourceKey(source.slice(5))?.temp;
     }
     if (source.startsWith("sensor:")) {
         const id = source.slice(7);
@@ -563,7 +745,7 @@ function collectSourceGroups(mode: "simple" | "advanced"): SourceGroup[] {
             {v: cpuSensor ? `sensor:${cpuSensor}` : "cpu", name: cpuLabel},
             {v: gpuSensor ? `sensor:${gpuSensor}` : "gpu", name: gpuLabel},
         ];
-        disks.forEach(d => items.push({v: `disk:${d.name}`, name: `硬盘 ${formatDiskLabel(d)}`, sleep: d.status === "sleep"}));
+        disks.forEach(d => items.push({v: diskSourceValue(d), name: `硬盘 ${formatDiskLabel(d)}`, sleep: d.status === "sleep"}));
         items.push({v: "disk_avg", name: "硬盘平均"});
         items.push({v: "disk_max", name: "硬盘最大"});
         items.forEach(it => {
@@ -591,8 +773,8 @@ function renderSourceOptions(current: string, mode: "simple" | "advanced", combo
     for (const g of groups) {
         html += `<div class="px-3 py-1 text-[10px] uppercase tracking-wider text-sky-400 bg-slate-900 sticky top-0 z-10 border-b border-slate-700/50">${esc(g.label)}</div>`;
         for (const it of g.items) {
-            if (it.v === current) currentInList = true;
-            const active = it.v === current;
+            if (sourcesMatch(it.v, current)) currentInList = true;
+            const active = sourcesMatch(it.v, current);
             const nameCls = active ? "text-sky-300 font-medium" : "text-slate-200";
             const sleepCls = it.sleep ? "text-slate-500 italic" : (active ? "text-sky-400" : "text-slate-400");
             const checkIcon = active ? `<iconify-icon class="text-sky-400 ml-2 flex-shrink-0" icon="mdi:check"></iconify-icon>` : "";
@@ -646,7 +828,7 @@ function renderComboSection(currentSource: string, comboStrategyRadioName: strin
         </div>
     </div>`;
     for (const it of items) {
-        const checked = selected.has(it.v);
+        const checked = isComboKeySelected(selected, it.v);
         html += `
 <label data-combo-key="${esc(it.v)}"
        class="w-full flex items-center justify-between gap-3 px-3 py-1.5 text-sm hover:bg-slate-700/70 cursor-pointer ${checked ? "bg-slate-700/40" : ""}">
@@ -684,7 +866,6 @@ function setSourceValue(value: string) {
         const tempPart = t != null ? ` · ${t.toFixed(1)}°C` : "";
         display.textContent = `${getSourceLabel(value)}${tempPart}`;
     }
-    // 已删除无用代码 const warn = document.getElementById("fe-source-warn");
 }
 
 function setFallbackSourceValue(value: string) {
@@ -698,18 +879,19 @@ function setFallbackSourceValue(value: string) {
     }
 }
 
-/** 获取传感器 ID 的人类可读短名称 */
+/** 获取传感器 ID 的人类可读短名称；有别名时仅显示别名 */
 function getSensorDisplayName(sensorId: string): string {
     const sensors = telemetry?.sensors ?? [];
     const aliases = config.global.sensor_aliases ?? {};
+    const alias = aliases[sensorId]?.trim();
+    if (alias) return alias;
     const s = sensors.find(x => x.id === sensorId);
     if (!s) return sensorId;
-    const name = aliases[s.id] || s.label || s.key;
+    const name = s.label || s.key;
     return s.device ? `${s.device}·${name}` : name;
 }
 
 function getSourceLabel(source: string): string {
-    const disks = telemetry?.disks.details ?? [];
     const sensors = telemetry?.sensors ?? [];
     const aliases = config.global.sensor_aliases ?? {};
     const cpuSensor = config.global.cpu_sensor;
@@ -723,15 +905,17 @@ function getSourceLabel(source: string): string {
     if (source === "disk_max") return "硬盘最大";
     if (source === "max") return "全部最大";
     if (source.startsWith("disk:")) {
-        const name = source.slice(5);
-        const disk = disks.find(d => d.name === name);
-        return disk ? `硬盘 ${formatDiskLabel(disk)}` : name;
+        const key = source.slice(5);
+        const disk = findDiskBySourceKey(key);
+        return disk ? `硬盘 ${formatDiskLabel(disk)}` : key;
     }
     if (source.startsWith("sensor:")) {
         const id = source.slice(7);
+        const alias = aliases[id]?.trim();
+        if (alias) return alias;
         const s = sensors.find(x => x.id === id);
-        if (!s) return aliases[id] || id;
-        const name = aliases[s.id] || s.label || s.key;
+        if (!s) return id;
+        const name = s.label || s.key;
         return s.device ? `${s.chip}·${s.device}·${name}` : `${s.chip}·${name}`;
     }
     if (source.startsWith("combo_avg:")) {
@@ -824,54 +1008,636 @@ function applySourceModeUI(mode: SourceMode) {
     }
 }
 
-function updateHistoryChart() {
-    if (!historyChart || !telemetry) return;
-    const h = telemetry.history;
+function historyPointValue(p: HistoryPoint): number | null {
+    return p.value != null ? p.value : null;
+}
 
-    function getValue(p: any): number | null {
-        return ("value" in p && p.value != null) ? p.value : null;
+function formatHistoryTemp(v: number | null | undefined): string {
+    if (v == null || !Number.isFinite(v)) return "—";
+    return `${v.toFixed(1)}°C`;
+}
+
+function formatHistoryPWM(v: number | null | undefined): string {
+    if (v == null || !Number.isFinite(v)) return "—";
+    return `${Math.round(v)}`;
+}
+
+function formatHistoryPWMPercent(v: number | null | undefined): string {
+    if (v == null || !Number.isFinite(v)) return "—";
+    return `${Math.round(v)}%`;
+}
+
+function formatHistoryRPM(v: number | null | undefined): string {
+    if (v == null || !Number.isFinite(v)) return "—";
+    return `${Math.round(v)} RPM`;
+}
+
+function lookupHistoryValueAt(points: HistoryPoint[] | undefined, ts: number): number | null {
+    if (!points?.length) return null;
+    let best: number | null = null;
+    let bestDiff = Infinity;
+    for (const p of points) {
+        const t = new Date(p.time).getTime();
+        if (!Number.isFinite(t)) continue;
+        const diff = Math.abs(t - ts);
+        if (diff < bestDiff) {
+            bestDiff = diff;
+            best = historyPointValue(p);
+        }
     }
+    // 允许与轴对齐后的时间有少量偏差（降采样/对齐）
+    if (bestDiff > 5 * 60 * 1000) return null;
+    return best;
+}
 
-    function getStats(arr: any[]): { min: number; max: number } {
-        const vals = arr.map(getValue).filter((v): v is number => v !== null);
-        if (vals.length === 0) return {min: Infinity, max: -Infinity};
-        return {min: Math.min(...vals), max: Math.max(...vals)};
+function historyTooltipValue(raw: unknown): number | null {
+    if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+    if (Array.isArray(raw) && raw.length >= 2) {
+        const v = raw[1];
+        if (typeof v === "number" && Number.isFinite(v)) return v;
     }
+    return null;
+}
 
-    const cpuStats = getStats(h.cpu_temp);
-    const gpuStats = getStats(h.gpu_temp);
-    const diskStats = getStats(h.disk_avg);
-    const dataMin = Math.min(cpuStats.min, gpuStats.min, diskStats.min);
-    const dataMax = Math.max(cpuStats.max, gpuStats.max, diskStats.max);
-    const yMin = isFinite(dataMin) ? Math.floor(dataMin / 5) * 5 - 5 : 0;
-    const yMax = isFinite(dataMax) ? Math.ceil(dataMax / 5) * 5 + 5 : 100;
-    const x = h.cpu_temp.map((p: any) => p.time);
-    historyChart.setOption({
-        xAxis: {data: x},
-        yAxis: {type: "value", min: Math.max(0, yMin), max: yMax},
-        series: [
-            {
-                data: h.cpu_temp.map(getValue),
-                color: "#38bdf8",
-                showSymbol: false,
-                lineStyle: {color: "#38bdf8", width: 2},
-                emphasis: {scale: 2}
-            },
-            {
-                data: h.gpu_temp.map(getValue),
-                color: "#f97316",
-                showSymbol: false,
-                lineStyle: {color: "#f97316", width: 2},
-                emphasis: {scale: 2}
-            },
-            {
-                data: h.disk_avg.map(getValue),
-                color: "#10b981",
-                showSymbol: false,
-                lineStyle: {color: "#10b981", width: 2},
-                emphasis: {scale: 2}
+function historyTooltipTime(raw: unknown): number | null {
+    if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+    if (Array.isArray(raw) && raw.length >= 1) {
+        const t = raw[0];
+        if (typeof t === "number" && Number.isFinite(t)) return t;
+    }
+    if (typeof raw === "string" && raw.includes("T")) {
+        const t = new Date(raw).getTime();
+        return Number.isFinite(t) ? t : null;
+    }
+    return null;
+}
+
+function historyTooltipFormatter(params: unknown): string {
+    const items = (Array.isArray(params) ? params : [params]) as Array<{
+        seriesName?: string;
+        seriesId?: string;
+        color?: string;
+        value?: unknown;
+        data?: unknown;
+        axisValue?: unknown;
+    }>;
+    if (items.length === 0) return "";
+    const rawHead = items[0].axisValue ?? items[0].value ?? items[0].data;
+    const headTime = historyTooltipTime(rawHead);
+    const head = headTime != null
+        ? formatHistoryAxisTime(new Date(headTime).toISOString())
+        : String(rawHead ?? "");
+    const lines = items
+        .map(it => {
+            const val = historyTooltipValue(it.value) ?? historyTooltipValue(it.data);
+            if (val == null) return null;
+            const dot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${it.color};margin-right:6px"></span>`;
+            const seriesId = it.seriesId ?? "";
+            if (seriesId.startsWith("fan_pwm:")) {
+                const fanId = seriesId.slice("fan_pwm:".length);
+                const rpm = headTime != null
+                    ? lookupHistoryValueAt(historyData?.fans_rpm?.[fanId], headTime)
+                    : null;
+                return `${dot}${it.seriesName}: ${formatHistoryPWMPercent(val)} · ${formatHistoryRPM(rpm)}`;
             }
-        ]
+            return `${dot}${it.seriesName}: ${formatHistoryTemp(val)}`;
+        })
+        .filter((line): line is string => line != null);
+    if (lines.length === 0) return head;
+    return `${head}<br/>${lines.join("<br/>")}`;
+}
+
+function historyChartTooltip() {
+    return {
+        trigger: "axis" as const,
+        formatter: historyTooltipFormatter,
+        confine: true,
+        extraCssText: "z-index: 10000; pointer-events: none;",
+    };
+}
+
+function applyHistoryViewUI() {
+    const sensorsWrap = document.getElementById("history-sensors-wrap");
+    const fansWrap = document.getElementById("history-fans-wrap");
+    sensorsWrap?.classList.toggle("hidden", historyView !== "temp");
+    fansWrap?.classList.toggle("hidden", historyView !== "fan");
+    if (historyView !== "temp") {
+        document.getElementById("history-sensor-dropdown")?.classList.add("hidden");
+        document.getElementById("history-sensors-chevron")?.setAttribute("icon", "mdi:chevron-down");
+    }
+    if (historyView !== "fan") {
+        document.getElementById("history-fan-dropdown")?.classList.add("hidden");
+        document.getElementById("history-fans-chevron")?.setAttribute("icon", "mdi:chevron-down");
+    }
+    document.querySelectorAll<HTMLButtonElement>("#history-view-tabs [data-history-view]").forEach(btn => {
+        const active = btn.dataset.historyView === historyView;
+        btn.className = `history-view-tab px-3 py-1 rounded-md transition-colors ${
+            active ? "bg-sky-600 text-white" : "text-slate-400 hover:text-white"
+        }`;
+    });
+}
+
+function setHistoryView(view: HistoryView) {
+    if (historyView === view) return;
+    historyView = view;
+    applyHistoryViewUI();
+    renderHistoryLegend();
+    updateHistoryChart();
+    scheduleHistoryChartResize();
+}
+
+function scheduleHistoryChartResize() {
+    if (!historyChart) return;
+    if (historyChartResizeRaf) cancelAnimationFrame(historyChartResizeRaf);
+    historyChartResizeRaf = requestAnimationFrame(() => {
+        historyChartResizeRaf = 0;
+        historyChart?.resize();
+    });
+}
+
+function bindHistoryChartResizeObserver(el: HTMLElement) {
+    historyChartResizeObserver?.disconnect();
+    historyChartResizeObserver = new IntersectionObserver(
+        entries => {
+            if (entries.some(e => e.isIntersecting)) scheduleHistoryChartResize();
+        },
+        {threshold: 0.01},
+    );
+    historyChartResizeObserver.observe(el);
+}
+
+function formatHistoryAxisTime(iso: string): string {
+    const d = new Date(iso);
+    const h = String(d.getHours()).padStart(2, "0");
+    const m = String(d.getMinutes()).padStart(2, "0");
+    if (historySpanHours <= 24) {
+        return `${h}:${m}`;
+    }
+    const mo = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    if (historySpanHours <= 7 * 24) {
+        return `${mo}-${day} ${h}:${m}`;
+    }
+    return `${mo}-${day}`;
+}
+
+function historyAxisLabelFormatter(val: number): string {
+    return formatHistoryAxisTime(new Date(val).toISOString());
+}
+
+function historyXAxisMinInterval(): number {
+    if (historySpanHours <= 1.5) return 10 * 60 * 1000;
+    if (historySpanHours <= 6) return 60 * 60 * 1000;
+    if (historySpanHours <= 24) return 2 * 60 * 60 * 1000;
+    if (historySpanHours <= 7 * 24) return 6 * 60 * 60 * 1000;
+    return 24 * 60 * 60 * 1000;
+}
+
+function latestHistoryPointTime(h: HistorySeries): number {
+    let max = 0;
+    const groups = [
+        h.cpu_temp,
+        h.gpu_temp,
+        h.disk_avg,
+        ...Object.values(h.sensors ?? {}),
+        ...Object.values(h.fans_pwm ?? {}),
+    ];
+    for (const pts of groups) {
+        for (const p of pts) {
+            const t = new Date(p.time).getTime();
+            if (Number.isFinite(t)) max = Math.max(max, t);
+        }
+    }
+    return max;
+}
+
+function applyHistoryTimeBounds(h: HistorySeries, windowEnd?: number, windowStart?: number) {
+    const spanMs = historySpanHours * 3600000;
+    const pad = Math.max(120_000, spanMs * 0.05);
+    const dataMax = latestHistoryPointTime(h);
+    const end = Math.max(windowEnd ?? Date.now(), dataMax);
+    historyTimeMax = end + pad;
+    historyTimeMin = (windowStart ?? end - spanMs) - pad * 0.2;
+}
+
+function sensorHistoryColor(id: string): string {
+    // 扩展传感器从第 4 色起，避免与 CPU/GPU/硬盘默认色撞车
+    const palette = HISTORY_SERIES_COLORS.slice(3);
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+    return palette[h % palette.length];
+}
+
+function fanHistoryColor(id: string): string {
+    const idx = (config.fans ?? []).findIndex(f => f.id === id);
+    const i = idx >= 0 ? idx : 0;
+    return HISTORY_SERIES_COLORS[i % HISTORY_SERIES_COLORS.length];
+}
+
+function historyPointsToSeriesData(points: HistoryPoint[]): [number, number][] {
+    const out: [number, number][] = [];
+    for (const p of points) {
+        const v = historyPointValue(p);
+        if (v == null || !Number.isFinite(v)) continue;
+        out.push([new Date(p.time).getTime(), v]);
+    }
+    return out;
+}
+
+/** PWM 历史点 → 百分比（与风扇卡片一致：PWM/255） */
+function historyPWMPointsToPercentData(points: HistoryPoint[]): [number, number][] {
+    const out: [number, number][] = [];
+    for (const p of points) {
+        const v = historyPointValue(p);
+        if (v == null || !Number.isFinite(v)) continue;
+        out.push([new Date(p.time).getTime(), Math.min(100, Math.max(0, v / 255 * 100))]);
+    }
+    return out;
+}
+
+function historyPointsStats(arr: HistoryPoint[] | undefined): {min: number; max: number} {
+    if (!arr?.length) return {min: Infinity, max: -Infinity};
+    const vals = arr.map(historyPointValue).filter((v): v is number => v !== null);
+    if (vals.length === 0) return {min: Infinity, max: -Infinity};
+    return {min: Math.min(...vals), max: Math.max(...vals)};
+}
+
+/** 温度页 Y 轴：覆盖当前已加载时间范围内所有展示序列的历史点 */
+function computeTempYAxisRange(h: HistorySeries, hidden: Set<string>): {min: number; max: number} {
+    let dataMin = Infinity;
+    let dataMax = -Infinity;
+    for (const arr of [h.cpu_temp, h.gpu_temp, h.disk_avg]) {
+        const s = historyPointsStats(arr);
+        dataMin = Math.min(dataMin, s.min);
+        dataMax = Math.max(dataMax, s.max);
+    }
+    for (const id of historySensorSelected) {
+        if (hidden.has(id)) continue;
+        const s = historyPointsStats(h.sensors?.[id]);
+        dataMin = Math.min(dataMin, s.min);
+        dataMax = Math.max(dataMax, s.max);
+    }
+    if (!isFinite(dataMin) || !isFinite(dataMax)) {
+        return {min: 0, max: 100};
+    }
+    return {
+        min: Math.max(0, Math.floor((dataMin - 2) / 5) * 5),
+        max: Math.ceil((dataMax + 2) / 5) * 5 + 5,
+    };
+}
+
+const HISTORY_LINE_DEFAULTS = {
+    type: "line" as const,
+    smooth: true,
+    smoothMonotone: "x" as const,
+    showSymbol: false,
+    clip: false,
+    emphasis: {scale: 2},
+};
+
+function historyLineSeries(
+    id: string,
+    name: string,
+    points: HistoryPoint[] | undefined,
+    color: string,
+    asPWMPercent = false,
+): echarts.SeriesOption {
+    return {
+        ...HISTORY_LINE_DEFAULTS,
+        id,
+        name,
+        data: asPWMPercent
+            ? historyPWMPointsToPercentData(points ?? [])
+            : historyPointsToSeriesData(points ?? []),
+        color,
+        lineStyle: {color, width: 2},
+    };
+}
+
+function historyChartXAxisOption() {
+    return {
+        ...HISTORY_X_AXIS_BASE,
+        min: historyTimeMin,
+        max: historyTimeMax,
+        minInterval: historyXAxisMinInterval(),
+        axisLabel: {
+            ...HISTORY_X_AXIS_BASE.axisLabel,
+            formatter: historyAxisLabelFormatter,
+        },
+    };
+}
+
+function updateHistoryChart() {
+    if (!historyChart || !historyData) return;
+    const h = historyData;
+    const hidden = new Set(config.global.sensor_hidden ?? []);
+    const series: echarts.SeriesOption[] = [];
+    let yAxis: echarts.YAXisComponentOption;
+
+    if (historyView === "temp") {
+        const {min: yMin, max: yMax} = computeTempYAxisRange(h, hidden);
+        series.push(
+            historyLineSeries("cpu_temp", "CPU", h.cpu_temp, HISTORY_COLOR_CPU),
+            historyLineSeries("gpu_temp", "GPU", h.gpu_temp, HISTORY_COLOR_GPU),
+            historyLineSeries("disk_avg", "硬盘平均", h.disk_avg, HISTORY_COLOR_DISK),
+        );
+        for (const s of telemetry?.sensors ?? []) {
+            if (hidden.has(s.id) || !historySensorSelected.has(s.id)) continue;
+            const pts = h.sensors?.[s.id];
+            if (!pts?.length) continue;
+            series.push(historyLineSeries(`sensor:${s.id}`, getSensorDisplayName(s.id), pts, sensorHistoryColor(s.id)));
+        }
+        yAxis = {
+            ...HISTORY_Y_AXIS_BASE,
+            min: yMin,
+            max: yMax,
+            axisLabel: {formatter: (v: number) => `${v.toFixed(0)}°`, margin: 8},
+        };
+    } else {
+        for (const fan of config.fans ?? []) {
+            if (!historyFanSelected.has(fan.id)) continue;
+            const pts = h.fans_pwm?.[fan.id];
+            if (!pts?.length) continue;
+            series.push(historyLineSeries(`fan_pwm:${fan.id}`, fan.name || fan.id, pts, fanHistoryColor(fan.id), true));
+        }
+        yAxis = {
+            ...HISTORY_Y_AXIS_BASE,
+            min: 0,
+            max: 100,
+            axisLabel: {formatter: (v: number) => `${v.toFixed(0)}%`, margin: 8},
+        };
+    }
+
+    historyChart.setOption({
+        xAxis: historyChartXAxisOption(),
+        yAxis,
+        series,
+    }, {replaceMerge: ["series", "yAxis"], silent: true});
+    scheduleHistoryChartResize();
+}
+
+async function loadHistoryChart() {
+    try {
+        if (historyRange === "custom") {
+            const fromEl = document.getElementById("history-from") as HTMLInputElement | null;
+            const toEl = document.getElementById("history-to") as HTMLInputElement | null;
+            const fromLocal = fromEl?.value;
+            const toLocal = toEl?.value;
+            if (!fromLocal || !toLocal) return;
+            const from = new Date(fromLocal).toISOString();
+            const to = new Date(toLocal).toISOString();
+            historySpanHours = (new Date(to).getTime() - new Date(from).getTime()) / 3600000;
+            historyData = await fetchHistory({from, to});
+            applyHistoryTimeBounds(historyData, new Date(to).getTime(), new Date(from).getTime());
+        } else {
+            const spanMap: Record<string, number> = {"1h": 1, "6h": 6, "24h": 24, "7d": 7 * 24};
+            historySpanHours = spanMap[historyRange] ?? 1;
+            historyData = await fetchHistory({range: historyRange});
+            applyHistoryTimeBounds(historyData);
+        }
+        updateHistoryChart();
+        renderHistoryLegend();
+        refreshHistorySelectorsFromTelemetry();
+    } catch (e: any) {
+        console.error(e);
+        toast(e?.message || "加载历史曲线失败", "error");
+    }
+}
+
+function renderHistoryLegend() {
+    const root = document.getElementById("history-legend-fixed");
+    if (!root) return;
+    const items: {name: string; color: string}[] = [];
+
+    if (historyView === "temp") {
+        const hidden = new Set(config.global.sensor_hidden ?? []);
+        items.push(
+            {name: "CPU", color: HISTORY_COLOR_CPU},
+            {name: "GPU", color: HISTORY_COLOR_GPU},
+            {name: "硬盘平均", color: HISTORY_COLOR_DISK},
+        );
+        // 与曲线一致：按 telemetry.sensors 顺序
+        for (const s of telemetry?.sensors ?? []) {
+            if (hidden.has(s.id) || !historySensorSelected.has(s.id)) continue;
+            items.push({name: getSensorDisplayName(s.id), color: sensorHistoryColor(s.id)});
+        }
+    } else {
+        // 与曲线一致：按 config.fans 顺序
+        for (const fan of config.fans ?? []) {
+            if (!historyFanSelected.has(fan.id)) continue;
+            items.push({name: fan.name || fan.id, color: fanHistoryColor(fan.id)});
+        }
+    }
+
+    root.innerHTML = items.map(it =>
+        `<span class="inline-flex items-center gap-1.5 text-slate-300 font-medium">
+            <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${esc(it.color)}"></span>
+            <span>${esc(it.name)}</span>
+        </span>`
+    ).join("");
+}
+
+function updateHistorySensorsButtonLabel() {
+    const label = document.getElementById("history-sensors-toggle-label");
+    if (!label) return;
+    const n = historySensorSelected.size;
+    label.textContent = n > 0 ? `传感器 (${n})` : "传感器";
+}
+
+function updateHistoryFansButtonLabel() {
+    const label = document.getElementById("history-fans-toggle-label");
+    if (!label) return;
+    const n = historyFanSelected.size;
+    label.textContent = n > 0 ? `风扇 (${n})` : "风扇";
+}
+
+/** 遥测推送时：仅在下拉打开时重建列表，避免每秒重绘 */
+function refreshHistorySelectorsFromTelemetry() {
+    const sensorsDropdown = document.getElementById("history-sensor-dropdown");
+    const fansDropdown = document.getElementById("history-fan-dropdown");
+    if (sensorsDropdown && !sensorsDropdown.classList.contains("hidden")) {
+        renderHistorySensorToggles();
+    } else {
+        updateHistorySensorsButtonLabel();
+    }
+    if (fansDropdown && !fansDropdown.classList.contains("hidden")) {
+        renderHistoryFanToggles();
+    } else {
+        updateHistoryFansButtonLabel();
+    }
+}
+
+function renderHistorySensorToggles() {
+    const root = document.getElementById("history-sensor-toggles");
+    if (!root) return;
+    const hidden = new Set(config.global.sensor_hidden ?? []);
+    const sensors = (telemetry?.sensors ?? []).filter(s => !hidden.has(s.id));
+    if (sensors.length === 0) {
+        root.innerHTML = `<span class="text-xs text-slate-500">暂无可用传感器</span>`;
+        updateHistorySensorsButtonLabel();
+        renderHistoryLegend();
+        return;
+    }
+    root.innerHTML = sensors.map(s => {
+        const color = sensorHistoryColor(s.id);
+        const name = getSensorDisplayName(s.id);
+        const on = historySensorSelected.has(s.id);
+        return `<button type="button" data-history-sensor="${esc(s.id)}"
+            class="w-full inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-left border transition-colors ${
+            on
+                ? "border-slate-500 bg-slate-700/80 text-slate-100"
+                : "border-transparent bg-slate-800/40 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+        }">
+            <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${esc(color)}"></span>
+            <span class="truncate flex-1" title="${esc(name)}">${esc(name)}</span>
+        </button>`;
+    }).join("");
+    updateHistorySensorsButtonLabel();
+    renderHistoryLegend();
+}
+
+function renderHistoryFanToggles() {
+    const root = document.getElementById("history-fan-toggles");
+    if (!root) return;
+    const fans = config.fans ?? [];
+    if (fans.length === 0) {
+        root.innerHTML = `<span class="text-xs text-slate-500">暂无风扇</span>`;
+        updateHistoryFansButtonLabel();
+        renderHistoryLegend();
+        return;
+    }
+    root.innerHTML = fans.map(f => {
+        const color = fanHistoryColor(f.id);
+        const name = f.name || f.id;
+        const on = historyFanSelected.has(f.id);
+        return `<button type="button" data-history-fan="${esc(f.id)}"
+            class="w-full inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-left border transition-colors ${
+            on
+                ? "border-slate-500 bg-slate-700/80 text-slate-100"
+                : "border-transparent bg-slate-800/40 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+        }">
+            <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${esc(color)}"></span>
+            <span class="truncate flex-1" title="${esc(name)}">${esc(name)}</span>
+        </button>`;
+    }).join("");
+    updateHistoryFansButtonLabel();
+    renderHistoryLegend();
+}
+
+function setupHistoryRefreshTimer() {
+    if (historyRefreshTimer != null) {
+        window.clearInterval(historyRefreshTimer);
+        historyRefreshTimer = null;
+    }
+    if (historyRange !== "custom") {
+        historyRefreshTimer = window.setInterval(() => loadHistoryChart(), 60_000);
+    }
+}
+
+function setupHistoryRangeControls() {
+    const rangeEl = document.getElementById("history-range") as HTMLSelectElement | null;
+    const panel = document.getElementById("history-custom-panel");
+    const applyBtn = document.getElementById("history-apply");
+    const toEl = document.getElementById("history-to") as HTMLInputElement | null;
+    const fromEl = document.getElementById("history-from") as HTMLInputElement | null;
+
+    document.getElementById("history-view-tabs")?.addEventListener("click", e => {
+        const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-history-view]");
+        if (!btn) return;
+        const view = btn.dataset.historyView as HistoryView | undefined;
+        if (view === "temp" || view === "fan") setHistoryView(view);
+    });
+
+    const now = new Date();
+    const fmt = (d: Date) => {
+        const p = (n: number) => String(n).padStart(2, "0");
+        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+    };
+    if (toEl) toEl.value = fmt(now);
+    if (fromEl) fromEl.value = fmt(new Date(now.getTime() - 14 * 86400000));
+
+    rangeEl?.addEventListener("change", () => {
+        historyRange = (rangeEl.value as HistoryRange) || "1h";
+        const isCustom = historyRange === "custom";
+        panel?.classList.toggle("hidden", !isCustom);
+        setupHistoryRefreshTimer();
+        void persistHistoryPrefs();
+        if (!isCustom) loadHistoryChart().catch(console.error);
+    });
+
+    applyBtn?.addEventListener("click", () => {
+        void persistHistoryPrefs().then(() => loadHistoryChart().catch(console.error));
+    });
+
+    const sensorsWrap = document.getElementById("history-sensors-wrap");
+    const sensorsToggle = document.getElementById("history-sensors-toggle");
+    const sensorsDropdown = document.getElementById("history-sensor-dropdown");
+    const sensorsPanel = document.getElementById("history-sensor-toggles");
+    const sensorsChevron = document.getElementById("history-sensors-chevron");
+
+    sensorsToggle?.addEventListener("click", e => {
+        e.stopPropagation();
+        document.getElementById("history-fan-dropdown")?.classList.add("hidden");
+        const fansChevron = document.getElementById("history-fans-chevron");
+        if (fansChevron) fansChevron.setAttribute("icon", "mdi:chevron-down");
+        const hidden = sensorsDropdown?.classList.toggle("hidden") ?? true;
+        if (sensorsChevron) {
+            sensorsChevron.setAttribute("icon", hidden ? "mdi:chevron-down" : "mdi:chevron-up");
+        }
+        if (!hidden) renderHistorySensorToggles();
+    });
+
+    const fansWrap = document.getElementById("history-fans-wrap");
+    const fansToggle = document.getElementById("history-fans-toggle");
+    const fansDropdown = document.getElementById("history-fan-dropdown");
+    const fansPanel = document.getElementById("history-fan-toggles");
+    const fansChevron = document.getElementById("history-fans-chevron");
+
+    fansToggle?.addEventListener("click", e => {
+        e.stopPropagation();
+        sensorsDropdown?.classList.add("hidden");
+        if (sensorsChevron) sensorsChevron.setAttribute("icon", "mdi:chevron-down");
+        const hidden = fansDropdown?.classList.toggle("hidden") ?? true;
+        if (fansChevron) {
+            fansChevron.setAttribute("icon", hidden ? "mdi:chevron-down" : "mdi:chevron-up");
+        }
+        if (!hidden) renderHistoryFanToggles();
+    });
+
+    document.addEventListener("click", e => {
+        const target = e.target as Node;
+        if (sensorsDropdown && !sensorsDropdown.classList.contains("hidden") && !sensorsWrap?.contains(target)) {
+            sensorsDropdown.classList.add("hidden");
+            if (sensorsChevron) sensorsChevron.setAttribute("icon", "mdi:chevron-down");
+        }
+        if (fansDropdown && !fansDropdown.classList.contains("hidden") && !fansWrap?.contains(target)) {
+            fansDropdown.classList.add("hidden");
+            if (fansChevron) fansChevron.setAttribute("icon", "mdi:chevron-down");
+        }
+    });
+
+    sensorsPanel?.addEventListener("click", e => {
+        const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-history-sensor]");
+        if (!btn) return;
+        e.stopPropagation();
+        const id = btn.dataset.historySensor!;
+        if (historySensorSelected.has(id)) historySensorSelected.delete(id);
+        else historySensorSelected.add(id);
+        renderHistorySensorToggles();
+        updateHistoryChart();
+        void persistHistoryPrefs();
+    });
+
+    fansPanel?.addEventListener("click", e => {
+        const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-history-fan]");
+        if (!btn) return;
+        e.stopPropagation();
+        const id = btn.dataset.historyFan!;
+        if (historyFanSelected.has(id)) historyFanSelected.delete(id);
+        else historyFanSelected.add(id);
+        renderHistoryFanToggles();
+        updateHistoryChart();
+        void persistHistoryPrefs();
     });
 }
 
@@ -879,56 +1645,33 @@ function initHistoryChart() {
     const el = $("history-chart");
     historyChart = echarts.init(el);
     historyChart.setOption({
+        ...HISTORY_CHART_ANIM,
         backgroundColor: "transparent",
         textStyle: {color: "#cbd5e1"},
-        legend: {top: 0, textStyle: {color: "#cbd5e1"}, data: ["CPU", "GPU", "硬盘平均"]},
-        tooltip: {trigger: "axis"},
-        grid: {left: 40, right: 20, top: 36, bottom: 24},
+        legend: {show: false},
+        tooltip: historyChartTooltip(),
+        grid: HISTORY_CHART_GRID,
         xAxis: {
-            type: "category",
-            data: [],
-            boundaryGap: false,
-            axisLine: {lineStyle: {color: "rgba(148,163,184,0.4)"}}
+            ...HISTORY_X_AXIS_BASE,
+            min: historyTimeMin || undefined,
+            max: historyTimeMax || undefined,
+            minInterval: historyXAxisMinInterval(),
+            axisLabel: {
+                ...HISTORY_X_AXIS_BASE.axisLabel,
+                formatter: historyAxisLabelFormatter,
+            },
         },
         yAxis: {
-            type: "value",
-            axisLine: {lineStyle: {color: "rgba(148,163,184,0.4)"}},
-            splitLine: {lineStyle: {color: "rgba(148,163,184,0.12)"}}
+            ...HISTORY_Y_AXIS_BASE,
+            axisLabel: {margin: 8},
         },
-        series: [
-            {
-                name: "CPU",
-                type: "line",
-                smooth: true,
-                data: [],
-                color: "#38bdf8",
-                lineStyle: {color: "#38bdf8", width: 2},
-                showSymbol: false,
-                emphasis: {scale: 2}
-            },
-            {
-                name: "GPU",
-                type: "line",
-                smooth: true,
-                data: [],
-                color: "#f97316",
-                lineStyle: {color: "#f97316", width: 2},
-                showSymbol: false,
-                emphasis: {scale: 2}
-            },
-            {
-                name: "硬盘平均",
-                type: "line",
-                smooth: true,
-                data: [],
-                color: "#10b981",
-                lineStyle: {color: "#10b981", width: 2},
-                showSymbol: false,
-                emphasis: {scale: 2}
-            }
-        ]
+        series: [],
     });
-    window.addEventListener("resize", () => historyChart?.resize());
+    bindHistoryChartResizeObserver(el);
+    window.addEventListener("resize", () => scheduleHistoryChartResize());
+    setupHistoryRangeControls();
+    applyHistoryViewUI();
+    renderHistoryLegend();
 }
 
 const symbolSize = 16;
@@ -1104,14 +1847,14 @@ function fillGlobalForm() {
     if (cpuSensorValue) cpuSensorValue.value = g.cpu_sensor || "";
     const cpuSensorDisplay = document.getElementById("cpu-sensor-display");
     if (cpuSensorDisplay) {
-        cpuSensorDisplay.textContent = g.cpu_sensor ? getSourceLabel(g.cpu_sensor) : "-- 使用默认检测 --";
+        cpuSensorDisplay.textContent = g.cpu_sensor ? getSensorDisplayName(g.cpu_sensor) : "-- 使用默认检测 --";
     }
 
     const gpuSensorValue = document.getElementById("gpu-sensor-value") as HTMLInputElement | null;
     if (gpuSensorValue) gpuSensorValue.value = g.gpu_sensor || "";
     const gpuSensorDisplay = document.getElementById("gpu-sensor-display");
     if (gpuSensorDisplay) {
-        gpuSensorDisplay.textContent = g.gpu_sensor ? getSourceLabel(g.gpu_sensor) : "-- 使用默认检测 --";
+        gpuSensorDisplay.textContent = g.gpu_sensor ? getSensorDisplayName(g.gpu_sensor) : "-- 使用默认检测 --";
     }
 }
 
@@ -1260,7 +2003,7 @@ function setCPUSensor(value: string) {
     if (input) input.value = value;
     const display = document.getElementById("cpu-sensor-display");
     if (display) {
-        display.textContent = value ? getSourceLabel(value) : "-- 使用默认检测 --";
+        display.textContent = value ? getSensorDisplayName(value) : "-- 使用默认检测 --";
     }
 }
 
@@ -1270,7 +2013,7 @@ function setGPUSensor(value: string) {
     if (input) input.value = value;
     const display = document.getElementById("gpu-sensor-display");
     if (display) {
-        display.textContent = value ? getSourceLabel(value) : "-- 使用默认检测 --";
+        display.textContent = value ? getSensorDisplayName(value) : "-- 使用默认检测 --";
     }
 }
 
@@ -1425,12 +2168,15 @@ function openFanSettingsDialog(idx: number) {
     applySourceModeUI(displayMode);
     initFanCurveChartShell();
     loadCurveIntoEditor();
-    const dz = fan.pwm_deadzone ?? config.global.pwm_deadzone;
-    ($("fe-deadzone") as HTMLInputElement).value = String(dz);
-    const hys = fan.stop_hysteresis ?? config.global.stop_hysteresis;
-    ($("fe-hysteresis") as HTMLInputElement).value = String(hys);
-    const em = fan.emergency_temp ?? config.global.emergency_temp;
-    ($("fe-emergency") as HTMLInputElement).value = String(em);
+    const dzEl = $("fe-deadzone") as HTMLInputElement;
+    dzEl.value = fan.pwm_deadzone != null ? String(fan.pwm_deadzone) : "";
+    dzEl.placeholder = `留空=默认${config.global.pwm_deadzone}`;
+    const hysEl = $("fe-hysteresis") as HTMLInputElement;
+    hysEl.value = fan.stop_hysteresis != null ? String(fan.stop_hysteresis) : "";
+    hysEl.placeholder = `留空=默认${config.global.stop_hysteresis}`;
+    const emEl = $("fe-emergency") as HTMLInputElement;
+    emEl.value = fan.emergency_temp != null ? String(fan.emergency_temp) : "";
+    emEl.placeholder = `留空=默认${config.global.emergency_temp}`;
     const polRaw = fan.fallback_policy;
     const pol = (polRaw === "stop" || polRaw === "min_pwm" || polRaw === "full_speed" || polRaw === "follow_other") ? polRaw : "keep_last";
     ($("fe-fallback-policy") as HTMLSelectElement).value = pol;
@@ -1810,6 +2556,10 @@ async function refresh() {
     config = cfg;
     applyTelemetry(info);
     fillGlobalForm();
+    applyHistoryPrefsFromConfig();
+    renderHistorySensorToggles();
+    renderHistoryFanToggles();
+    loadHistoryChart().catch(console.error);
 }
 
 async function main() {
@@ -1855,6 +2605,7 @@ async function main() {
 
         readSensorMgrIntoConfig();
         config.global = readGlobalForm();
+        syncHistoryPrefsToConfig();
 
         try {
             await setGlobalConfig(config.global);
@@ -1914,10 +2665,13 @@ async function main() {
 
         try {
             await saveConfig(config);
-            await setFanCurve(fan.id, fan.curve);
+            // 曲线已随 saveConfig 写入；勿再调 setFanCurve（会强制改成自动模式）
             originalSourceMode = null;
             editFanIdx = null;
             syncFanCardsFromTelemetryOrRender();
+            // 改名后同步历史曲线图例、下拉与系列名称
+            renderHistoryFanToggles();
+            updateHistoryChart();
             safeCloseFanEditDialog();
             toast("已保存", "success");
         } catch (e: any) {

@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"fancontrolserver/internal/version"
 )
 
 // AuthManager 负责区分运行模式：统一网关模式 vs 独立模式。
@@ -42,17 +44,18 @@ func (am *AuthManager) Middleware() gin.HandlerFunc {
 // authStatus 返回当前鉴权模式及登录用户信息，供前端初始化使用。
 func (h *handler) authStatus(c *gin.Context) {
 	if !h.auth.gatewayMode {
-		c.JSON(http.StatusOK, gin.H{"gateway_mode": false})
+		c.JSON(http.StatusOK, gin.H{"gateway_mode": false, "version": version.Version})
 		return
 	}
 	user, ok := GatewayUserFromRequest(c)
 	if !ok {
-		c.JSON(http.StatusOK, gin.H{"gateway_mode": true, "logged_in": false})
+		c.JSON(http.StatusOK, gin.H{"gateway_mode": true, "logged_in": false, "version": version.Version})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"gateway_mode": true,
 		"logged_in":    true,
+		"version":      version.Version,
 		"user": gin.H{
 			"uid":      user.UID,
 			"username": user.Username,

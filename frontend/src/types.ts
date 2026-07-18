@@ -53,6 +53,11 @@ export interface GlobalConfig {
     source_mode?: "simple" | "advanced";
     sensor_aliases?: Record<string, string>;
     sensor_hidden?: string[];
+    history_range?: HistoryRange;
+    history_sensors?: string[] | null;
+    history_fans?: string[] | null;
+    history_from?: string;
+    history_to?: string;
 }
 
 export interface SensorReading {
@@ -65,6 +70,7 @@ export interface SensorReading {
 }
 
 export interface ConfigPayload {
+    version?: number;
     fans: FanConfig[];
     global: GlobalConfig;
 }
@@ -92,6 +98,17 @@ export interface HistoryPoint {
     value?: number;
 }
 
+export interface HistorySeries {
+    cpu_temp: HistoryPoint[];
+    gpu_temp: HistoryPoint[];
+    disk_avg: HistoryPoint[];
+    sensors?: Record<string, HistoryPoint[]>;
+    fans_pwm?: Record<string, HistoryPoint[]>;
+    fans_rpm?: Record<string, HistoryPoint[]>;
+}
+
+export type HistoryRange = "1h" | "6h" | "24h" | "7d" | "custom";
+
 export interface Telemetry {
     cpu_temp?: number;
     cpu_usage: number;
@@ -108,9 +125,4 @@ export interface Telemetry {
     sensors: SensorReading[];
     timestamp: string;
     uptime?: number;  // 系统运行时间（秒）
-    history: {
-        cpu_temp: HistoryPoint[];
-        gpu_temp: HistoryPoint[];
-        disk_avg: HistoryPoint[];
-    };
 }
