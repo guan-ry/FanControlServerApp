@@ -10,6 +10,24 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+// VarRoot 可变数据根目录（logs/、data/ 的父目录）。
+func VarRoot() string {
+	if v := os.Getenv("TRIM_PKGVAR"); v != "" {
+		return v
+	}
+	return "."
+}
+
+// LogDir 日志目录，位于 VarRoot/logs。
+func LogDir() string {
+	return filepath.Join(VarRoot(), "logs")
+}
+
+// DataDir 持久化数据目录，位于 VarRoot/data（如 history.db）。
+func DataDir() string {
+	return filepath.Join(VarRoot(), "data")
+}
+
 // Config 日志配置
 type Config struct {
 	Level      string // 日志级别: debug, info, warn, error
@@ -24,7 +42,7 @@ type Config struct {
 func Init() {
 	InitWithConfig(Config{
 		Level:      "info",
-		Dir:        "logs",
+		Dir:        LogDir(),
 		File:       "app.log",
 		MaxSizeMB:  10,
 		MaxAgeDays: 7,
@@ -34,10 +52,9 @@ func Init() {
 
 // InitWithConfig 使用配置初始化日志
 func InitWithConfig(cfg Config) {
-	// 如果环境变量 TRIM_PKGVAR 存在，则覆盖日志目录为 ${TRIM_PKGVAR}/logs
-	if trimPkgVar := os.Getenv("TRIM_PKGVAR"); trimPkgVar != "" {
-		cfg.Dir = filepath.Join(trimPkgVar, "logs")
-		cfg.File = "app.log" // 保持文件名固定
+	cfg.Dir = LogDir()
+	if cfg.File == "" {
+		cfg.File = "app.log"
 	}
 
 	logrus.SetFormatter(&logrus.TextFormatter{
@@ -51,10 +68,7 @@ func InitWithConfig(cfg Config) {
 		cfg.Level = "info"
 	}
 	if cfg.Dir == "" {
-		cfg.Dir = "logs"
-	}
-	if cfg.File == "" {
-		cfg.File = "app.log"
+		cfg.Dir = LogDir()
 	}
 	if cfg.MaxSizeMB <= 0 {
 		cfg.MaxSizeMB = 10

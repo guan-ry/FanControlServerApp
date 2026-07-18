@@ -17,31 +17,29 @@ import (
 )
 
 type Controller struct {
-	store               *Store
-	hwmon               *driver.HWMONDriver
-	system              *driver.SystemDriver
-	smartctl            *driver.SmartCtlDriver
-	gpu                 *driver.GPUDriver
-	mu                  sync.RWMutex
-	telemetry           model.Telemetry
-	history             model.HistorySeries
-	lastPWM             map[string]int
-	lastValidPWM        map[string]int // 滞回区间保留的最后有效PWM
-	subs                map[chan model.Telemetry]struct{}
-	stopCh              chan struct{}
-	stopped             bool
-	loopDoneCh          chan struct{}
-	startTime           time.Time
-	lastCPUHistoryTime  time.Time            // CPU 历史上次记录时间
-	lastGPUHistoryTime  time.Time            // GPU 历史上次记录时间
-	lastDiskHistoryTime time.Time            // 磁盘历史上次记录时间
-	sensorChans         []driver.TempChannel // 缓存 hwmon 温度通道列表
-	lastSensorScan      time.Time            // 上次扫描时间
+	store          *Store
+	history        *HistoryStore
+	hwmon          *driver.HWMONDriver
+	system         *driver.SystemDriver
+	smartctl       *driver.SmartCtlDriver
+	gpu            *driver.GPUDriver
+	mu             sync.RWMutex
+	telemetry      model.Telemetry
+	lastPWM        map[string]int
+	lastValidPWM   map[string]int // 滞回区间保留的最后有效PWM
+	subs           map[chan model.Telemetry]struct{}
+	stopCh         chan struct{}
+	stopped        bool
+	loopDoneCh     chan struct{}
+	startTime      time.Time
+	sensorChans    []driver.TempChannel // 缓存 hwmon 温度通道列表
+	lastSensorScan time.Time            // 上次扫描时间
 }
 
-func NewController(store *Store) *Controller {
+func NewController(store *Store, history *HistoryStore) *Controller {
 	return &Controller{
 		store:        store,
+		history:      history,
 		hwmon:        driver.NewHWMONDriver(),
 		system:       driver.NewSystemDriver(),
 		smartctl:     driver.NewSmartCtlDriver(),
@@ -52,11 +50,6 @@ func NewController(store *Store) *Controller {
 		stopCh:       make(chan struct{}),
 		loopDoneCh:   make(chan struct{}),
 		startTime:    time.Now(),
-		history: model.HistorySeries{
-			CPUTemp: []model.HistoryPoint{},
-			GPUTemp: []model.HistoryPoint{},
-			DiskAvg: []model.HistoryPoint{},
-		},
 	}
 }
 
@@ -82,7 +75,7 @@ func (c *Controller) rebindFanPaths() {
 	for i := range cfg.Fans {
 		f := &cfg.Fans[i]
 		if f.Chip == "" || f.PWMIndex <= 0 {
-			logrus.Warnf("[路径重重绑定] 风扇 %s 缺少 chip/pwm_index，请删除后重新扫描添加", f.ID)
+			logrus.Warnf("[路径重绑定] 风扇 %s 缺少 chip/pwm_index，请删除后重新扫描添加", f.ID)
 		}
 		key := f.Chip + "|" + f.Device + "|" + strconv.Itoa(f.PWMIndex)
 		if cur, ok := idx[key]; ok {
@@ -112,6 +105,22 @@ func (c *Controller) Stop() {
 
 	<-c.loopDoneCh
 	c.applyStopBehavior()
+	if c.history != nil {
+		if err := c.history.Close(); err != nil {
+			logrus.Warnf("[控制器] 保存温度历史失败：%v", err)
+		}
+	}
+}
+
+func (c *Controller) QueryHistory(rangeParam, fromParam, toParam string) (model.HistorySeries, error) {
+	if c.history == nil {
+		return model.HistorySeries{Sensors: map[string][]model.HistoryPoint{}}, nil
+	}
+	q, err := ParseHistoryQuery(rangeParam, fromParam, toParam, time.Now())
+	if err != nil {
+		return model.HistorySeries{}, err
+	}
+	return c.history.Query(q), nil
 }
 
 func (c *Controller) Telemetry() model.Telemetry {
@@ -148,11 +157,10 @@ func (c *Controller) loop() {
 
 		cfg := c.store.Get()
 		t := c.collectAndApply(cfg)
+		if c.history != nil {
+			c.history.RecordSnapshot(t)
+		}
 		c.mu.Lock()
-		c.pushTempHistory(&c.history.CPUTemp, &c.lastCPUHistoryTime, t.Timestamp, t.CPUTemp)
-		c.pushTempHistory(&c.history.GPUTemp, &c.lastGPUHistoryTime, t.Timestamp, t.GPUTemp)
-		c.pushTempHistory(&c.history.DiskAvg, &c.lastDiskHistoryTime, t.Timestamp, t.Disks.AvgTemp)
-		t.History = c.history
 		c.telemetry = t
 		for sub := range c.subs {
 			select {
@@ -187,6 +195,8 @@ func (c *Controller) collectAndApply(cfg model.Config) model.Telemetry {
 	uptime := int64(now.Sub(c.startTime).Seconds())
 
 	disks := c.readDisks()
+	c.maybeMigrateDiskSources(disks)
+	cfg = c.store.Get()
 
 	// 生成传感器来源标签
 	cpuSensorLabel := resolveSensorLabel(cfg.Global.CPUSensor, sensors, "CPU")
@@ -501,9 +511,12 @@ func (c *Controller) resolveSourceTemp(
 		}
 		return best
 	case strings.HasPrefix(source, "disk:"):
-		name := source[len("disk:"):]
+		key := source[len("disk:"):]
 		for _, disk := range disks.Details {
-			if disk.Name == name && disk.Status == model.DiskStatusActive && disk.Temp != nil {
+			if !diskMatchesKey(disk, key) {
+				continue
+			}
+			if disk.Status == model.DiskStatusActive && disk.Temp != nil {
 				v := *disk.Temp
 				return &v
 			}
@@ -660,7 +673,9 @@ func (c *Controller) RemoveFan(id string) error {
 	}
 	// 恢复自动模式：如果 EnablePath 非空，写入 0 启用硬件自动控制
 	if targetFan.EnablePath != "" {
-		if err := os.WriteFile(targetFan.EnablePath, []byte("0\n"), 0644); err != nil {
+		if err := driver.ValidateHwmonPath(targetFan.EnablePath); err != nil {
+			logrus.Warnf("[控制器] 风扇 %s enable_path 非法，跳过恢复自动控制：%v", targetFan.Name, err)
+		} else if err := os.WriteFile(targetFan.EnablePath, []byte("0\n"), 0644); err != nil {
 			logrus.Warnf("[控制器] 恢复风扇 %s 自动模式失败: %v", targetFan.Name, err)
 		} else {
 			logrus.Infof("[控制器] 风扇 %s 已恢复为系统自动控制", targetFan.Name)
@@ -764,18 +779,6 @@ func (c *Controller) autoDiscoverFansOnFirstRun() {
 	logrus.Infof("[controller] first-run auto-discovered %d fan(s)", len(cfg.Fans))
 }
 
-func (c *Controller) pushTempHistory(dst *[]model.HistoryPoint, lastTime *time.Time, now time.Time, value *float64) {
-	// 每1分钟记录一次历史数据
-	if now.Sub(*lastTime) < time.Minute {
-		return
-	}
-	*lastTime = now
-	*dst = append(*dst, model.HistoryPoint{Time: now.Format("15:04"), Value: value})
-	if len(*dst) > 60 {
-		*dst = (*dst)[len(*dst)-60:]
-	}
-}
-
 func evaluateFanStatus(rpm int) model.FanStatus {
 	if rpm == 0 {
 		return model.FanStatusStopped
@@ -806,6 +809,90 @@ func interpolateCurve(points []model.CurvePoint, temp float64) int {
 	}
 	result := points[len(points)-1].PWM
 	return result
+}
+
+// diskMatchesKey 匹配磁盘：优先序列号，其次设备名（兼容旧配置 disk:sda）。
+func diskMatchesKey(disk model.DiskInfo, key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+	if serial := strings.TrimSpace(disk.Serial); serial != "" && serial == key {
+		return true
+	}
+	return disk.Name == key
+}
+
+// remapDiskRefInSource 将 source 中的 disk:设备名 改为 disk:序列号（combo 内子项一并处理）。
+func remapDiskRefInSource(source string, nameToSerial map[string]string) (string, bool) {
+	source = strings.TrimSpace(source)
+	if source == "" || len(nameToSerial) == 0 {
+		return source, false
+	}
+	if strings.HasPrefix(source, "disk:") {
+		name := source[len("disk:"):]
+		if serial, ok := nameToSerial[name]; ok && serial != "" && serial != name {
+			return "disk:" + serial, true
+		}
+		return source, false
+	}
+	for _, prefix := range []string{"combo_avg:", "combo_max:"} {
+		if !strings.HasPrefix(source, prefix) {
+			continue
+		}
+		parts := strings.Split(source[len(prefix):], ",")
+		changed := false
+		for i, p := range parts {
+			p = strings.TrimSpace(p)
+			n, ok := remapDiskRefInSource(p, nameToSerial)
+			if ok {
+				parts[i] = n
+				changed = true
+			} else {
+				parts[i] = p
+			}
+		}
+		if !changed {
+			return source, false
+		}
+		return prefix + strings.Join(parts, ","), true
+	}
+	return source, false
+}
+
+// maybeMigrateDiskSources 将配置中仍按设备名绑定的 disk:sda 升级为 disk:<serial>。
+// 幂等：已是序列号的源不会再改；尚无序列号的盘在后续扫描到后再迁移。
+func (c *Controller) maybeMigrateDiskSources(disks model.DiskPayload) {
+	nameToSerial := make(map[string]string, len(disks.Details))
+	for _, d := range disks.Details {
+		if s := strings.TrimSpace(d.Serial); s != "" && d.Name != "" {
+			nameToSerial[d.Name] = s
+		}
+	}
+	if len(nameToSerial) == 0 {
+		return
+	}
+
+	cfg := c.store.Get()
+	changed := false
+	for i := range cfg.Fans {
+		if next, ok := remapDiskRefInSource(cfg.Fans[i].Source, nameToSerial); ok {
+			logrus.Infof("[配置] 风扇 %s 温度源 %s → %s（按序列号绑定）", cfg.Fans[i].ID, cfg.Fans[i].Source, next)
+			cfg.Fans[i].Source = next
+			changed = true
+		}
+		if next, ok := remapDiskRefInSource(cfg.Fans[i].FallbackFollowSource, nameToSerial); ok {
+			logrus.Infof("[配置] 风扇 %s 后备温度源 %s → %s（按序列号绑定）", cfg.Fans[i].ID, cfg.Fans[i].FallbackFollowSource, next)
+			cfg.Fans[i].FallbackFollowSource = next
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
+	if err := c.store.Save(cfg); err != nil {
+		logrus.Warnf("[配置] 磁盘温度源迁移保存失败：%v", err)
+	}
 }
 
 func effectivePWMDeadzone(fan model.FanConfig, global model.GlobalConfig) int {

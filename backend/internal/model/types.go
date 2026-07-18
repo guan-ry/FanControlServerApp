@@ -81,6 +81,11 @@ type GlobalConfig struct {
 	SensorHidden     []string          `json:"sensor_hidden,omitempty"`  // 隐藏的传感器ID列表
 	CPUSensor        string            `json:"cpu_sensor,omitempty"`     // 自定义 CPU 温度传感器 ID
 	GPUSensor        string            `json:"gpu_sensor,omitempty"`     // 自定义 GPU 温度传感器 ID
+	HistoryRange     string            `json:"history_range,omitempty"`  // 温度历史图时间范围：1h/6h/24h/7d/custom
+	HistorySensors   []string          `json:"history_sensors"`          // 历史曲线温度页选中的传感器；null=未配置，[]=全不选
+	HistoryFans      []string          `json:"history_fans"`             // 历史曲线风扇页选中的风扇 ID；null=未配置，[]=全不选
+	HistoryFrom      string            `json:"history_from,omitempty"`   // 自定义范围起始（datetime-local）
+	HistoryTo        string            `json:"history_to,omitempty"`     // 自定义范围结束（datetime-local）
 }
 
 const CurrentConfigVersion = 3
@@ -127,7 +132,6 @@ type Telemetry struct {
 	Fans           []FanRuntime    `json:"fans"`
 	Sensors        []SensorReading `json:"sensors"`
 	Timestamp      time.Time       `json:"timestamp"`
-	History        HistorySeries   `json:"history"`
 }
 
 type SensorReading struct {
@@ -140,12 +144,15 @@ type SensorReading struct {
 }
 
 type HistoryPoint struct {
-	Time  string   `json:"time"`
-	Value *float64 `json:"value,omitempty"`
+	Time  time.Time `json:"time"`
+	Value *float64  `json:"value,omitempty"`
 }
 
 type HistorySeries struct {
-	CPUTemp []HistoryPoint `json:"cpu_temp"`
-	GPUTemp []HistoryPoint `json:"gpu_temp"`
-	DiskAvg []HistoryPoint `json:"disk_avg"`
+	CPUTemp []HistoryPoint            `json:"cpu_temp"`
+	GPUTemp []HistoryPoint            `json:"gpu_temp"`
+	DiskAvg []HistoryPoint            `json:"disk_avg"`
+	Sensors map[string][]HistoryPoint `json:"sensors,omitempty"`
+	FansPWM map[string][]HistoryPoint `json:"fans_pwm,omitempty"`
+	FansRPM map[string][]HistoryPoint `json:"fans_rpm,omitempty"`
 }

@@ -64,8 +64,11 @@ try
     {
         exit $LASTEXITCODE
     }
+    $manifestLine = Get-Content (Join-Path $Root "manifest") | Where-Object { $_ -match '^\s*version\s*=' } | Select-Object -First 1
+    $appVersion = ($manifestLine -split '=', 2)[1].Trim()
+    $ldflags = "-s -w -X fancontrolserver/internal/version.Version=$appVersion"
     $out = Join-Path $serverDir "fancontrolserver"
-    go build -trimpath -ldflags "-s -w" -o $out .
+    go build -trimpath -ldflags $ldflags -o $out .
     if ($LASTEXITCODE -ne 0)
     {
         exit $LASTEXITCODE

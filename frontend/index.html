@@ -216,11 +216,12 @@
 <header class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
     <div>
         <div class="flex items-center gap-3">
-            <div class="p-3 bg-sky-500/10 rounded-2xl border border-sky-500/20">
+            <div class="w-12 h-12 bg-sky-500/10 rounded-md border border-sky-500/20 flex items-center justify-center flex-shrink-0">
                 <iconify-icon class="text-3xl text-sky-400" icon="mdi:snowflake"></iconify-icon>
             </div>
-            <div>
+            <div class="flex items-baseline gap-2 min-w-0">
                 <h1 class="text-2xl font-bold text-white tracking-tight">FanControlServer</h1>
+                <span id="app-version" class="text-sm text-slate-500 font-mono leading-none"></span>
             </div>
         </div>
     </div>
@@ -384,12 +385,72 @@
         <div id="fan-root" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
     </section>
 
-    <!-- 温度历史 -->
+    <!-- 历史曲线：温度 / 风扇 Tab -->
     <section class="glass-card p-6">
-        <h2 class="text-lg font-bold mb-4 flex items-center gap-2">
-            <iconify-icon class="text-sky-400" icon="mdi:chart-line"></iconify-icon>
-            温度历史
-        </h2>
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div class="flex flex-wrap items-center gap-3">
+                <h2 class="text-lg font-bold flex items-center gap-2">
+                    <iconify-icon class="text-sky-400" icon="mdi:chart-line"></iconify-icon>
+                    历史曲线
+                </h2>
+                <div id="history-view-tabs" class="inline-flex rounded-lg border border-slate-700 bg-slate-800/60 p-0.5 text-sm">
+                    <button type="button" data-history-view="temp"
+                            class="history-view-tab px-3 py-1 rounded-md transition-colors bg-sky-600 text-white">
+                        温度
+                    </button>
+                    <button type="button" data-history-view="fan"
+                            class="history-view-tab px-3 py-1 rounded-md transition-colors text-slate-400 hover:text-white">
+                        风扇
+                    </button>
+                </div>
+            </div>
+            <div class="flex flex-wrap items-center gap-2 text-sm">
+                <select id="history-range"
+                        class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-sky-500">
+                    <option value="1h">1 小时</option>
+                    <option value="6h">6 小时</option>
+                    <option value="24h">24 小时</option>
+                    <option value="7d">7 天</option>
+                    <option value="custom">自定义</option>
+                </select>
+                <div id="history-custom-panel" class="hidden flex flex-wrap items-center gap-2">
+                    <input type="datetime-local" id="history-from"
+                           class="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-sky-500"/>
+                    <span class="text-slate-500">至</span>
+                    <input type="datetime-local" id="history-to"
+                           class="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-sky-500"/>
+                    <button type="button" id="history-apply"
+                            class="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs transition-colors">
+                        应用
+                    </button>
+                </div>
+                <div class="relative" id="history-sensors-wrap">
+                    <button type="button" id="history-sensors-toggle"
+                            class="inline-flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 hover:bg-slate-700/80 transition-colors focus:outline-none focus:ring-1 focus:ring-sky-500">
+                        <iconify-icon icon="mdi:thermometer-lines"></iconify-icon>
+                        <span id="history-sensors-toggle-label">传感器</span>
+                        <iconify-icon id="history-sensors-chevron" class="text-base" icon="mdi:chevron-down"></iconify-icon>
+                    </button>
+                    <div id="history-sensor-dropdown"
+                         class="hidden absolute right-0 top-full mt-1 z-50 min-w-[14rem] max-w-[20rem] rounded-xl border border-slate-700/80 bg-slate-900/95 shadow-xl backdrop-blur-sm p-2">
+                        <div id="history-sensor-toggles" class="flex flex-col gap-1 max-h-64 overflow-y-auto"></div>
+                    </div>
+                </div>
+                <div class="relative hidden" id="history-fans-wrap">
+                    <button type="button" id="history-fans-toggle"
+                            class="inline-flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 hover:bg-slate-700/80 transition-colors focus:outline-none focus:ring-1 focus:ring-sky-500">
+                        <iconify-icon icon="mdi:fan"></iconify-icon>
+                        <span id="history-fans-toggle-label">风扇</span>
+                        <iconify-icon id="history-fans-chevron" class="text-base" icon="mdi:chevron-down"></iconify-icon>
+                    </button>
+                    <div id="history-fan-dropdown"
+                         class="hidden absolute right-0 top-full mt-1 z-50 min-w-[14rem] max-w-[20rem] rounded-xl border border-slate-700/80 bg-slate-900/95 shadow-xl backdrop-blur-sm p-2">
+                        <div id="history-fan-toggles" class="flex flex-col gap-1 max-h-64 overflow-y-auto"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="history-legend-fixed" class="flex flex-wrap items-center gap-3 text-xs mb-2 text-slate-400"></div>
         <div class="w-full h-80 bg-slate-900/40 rounded-2xl border border-slate-700/30" id="history-chart"></div>
     </section>
 

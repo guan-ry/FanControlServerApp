@@ -1,5 +1,5 @@
 import axios from "axios";
-import type {ConfigPayload, CurvePoint, GlobalConfig, ScannedFan, Telemetry} from "./types";
+import type {ConfigPayload, CurvePoint, DiskInfo, FanConfig, GlobalConfig, HistoryRange, HistorySeries, ScannedFan, Telemetry} from "./types";
 
 export let gatewayMode = false;
 
@@ -10,8 +10,10 @@ function apiBase(): string {
 
 export async function initAuthMode(): Promise<void> {
     try {
-        const {data} = await axios.get<{ gateway_mode?: boolean }>(`${apiBase()}/api/auth/status`);
+        const {data} = await axios.get<{ gateway_mode?: boolean; version?: string }>(`${apiBase()}/api/auth/status`);
         gatewayMode = !!data.gateway_mode;
+        const verEl = document.getElementById("app-version");
+        if (verEl && data.version) verEl.textContent = `v${data.version}`;
     } catch {
         gatewayMode = false;
     }
@@ -69,6 +71,11 @@ export async function setFanCurve(id: string, curve: CurvePoint[]) {
 
 export async function removeFan(id: string) {
     await client.post("/fan/remove", {id});
+}
+
+export async function fetchHistory(params: { range?: Exclude<HistoryRange, "custom">; from?: string; to?: string }) {
+    const {data} = await client.get<HistorySeries>("/device/history", {params});
+    return data;
 }
 
 export async function setGlobalConfig(payload: GlobalConfig) {

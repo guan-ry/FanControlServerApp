@@ -266,6 +266,9 @@ func stableFieldsFromPWMPath(pwmPath string) (chip, device string, pwmIndex int)
 }
 
 func normalizeConfig(cfg *model.Config) {
+	if cfg.Version < model.CurrentConfigVersion {
+		cfg.Version = model.CurrentConfigVersion
+	}
 	// 全局配置字段合法性校验与默认值填充
 	if cfg.Global.PWMDeadzone < 0 || cfg.Global.PWMDeadzone > 255 {
 		cfg.Global.PWMDeadzone = 5
@@ -294,6 +297,7 @@ func normalizeConfig(cfg *model.Config) {
 	if cfg.Global.SensorHidden == nil {
 		cfg.Global.SensorHidden = []string{}
 	}
+	// HistorySensors / HistoryFans：nil = 从未配置（前端用默认勾选），[] = 用户显式全不选；勿把 nil 归一成 []
 
 	// 风扇列表排序：按ID稳定排序
 	sort.Slice(cfg.Fans, func(i, j int) bool { return cfg.Fans[i].ID < cfg.Fans[j].ID })
