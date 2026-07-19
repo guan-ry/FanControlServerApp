@@ -1966,18 +1966,24 @@ function readSensorMgrIntoConfig() {
     const tbody = document.getElementById("sensor-mgr-tbody");
     if (!tbody) return;
     const rows = tbody.querySelectorAll<HTMLTableRowElement>("tr[data-sensor-id]");
-    const aliases: Record<string, string> = {};
-    const hidden: string[] = [];
+    // 面板未打开或尚无传感器行时不要整表覆盖，否则会清空已保存的别名/隐藏列表
+    if (rows.length === 0) return;
+
+    const aliases: Record<string, string> = {...(config.global.sensor_aliases ?? {})};
+    const hiddenSet = new Set(config.global.sensor_hidden ?? []);
     rows.forEach(row => {
         const id = row.dataset.sensorId!;
         const aliasInput = row.querySelector<HTMLInputElement>("input[data-sensor-alias]");
         const hiddenCb = row.querySelector<HTMLInputElement>("input[data-sensor-hidden]");
         const alias = aliasInput?.value.trim() ?? "";
         if (alias) aliases[id] = alias;
-        if (hiddenCb?.checked) hidden.push(id);
+        else delete aliases[id];
+
+        if (hiddenCb?.checked) hiddenSet.add(id);
+        else hiddenSet.delete(id);
     });
     config.global.sensor_aliases = aliases;
-    config.global.sensor_hidden = hidden;
+    config.global.sensor_hidden = [...hiddenSet];
 }
 
 function updateSensorMgrTemps() {
