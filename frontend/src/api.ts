@@ -1,5 +1,5 @@
 import axios from "axios";
-import type {ConfigPayload, CurvePoint, DiskInfo, FanConfig, GlobalConfig, HistoryRange, HistorySeries, ScannedFan, Telemetry} from "./types";
+import type {ConfigPayload, CurvePoint, DiskInfo, FanConfig, GlobalConfig, HistoryRange, HistorySeries, ScannedFan, Telemetry, UpdateCheckResult} from "./types";
 
 export let gatewayMode = false;
 
@@ -80,4 +80,11 @@ export async function fetchHistory(params: { range?: Exclude<HistoryRange, "cust
 
 export async function setGlobalConfig(payload: GlobalConfig) {
     await client.post("/global/config", payload);
+}
+
+export async function checkUpdate(force = false) {
+    const {data} = await client.get<UpdateCheckResult>("/update/check", {
+        params: force ? {force: 1} : undefined,
+    });
+    return data;
 }

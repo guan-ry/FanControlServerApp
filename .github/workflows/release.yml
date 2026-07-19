@@ -58,7 +58,11 @@ jobs:
           mkdir -p app/server
           cd backend
           go mod tidy
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o ../app/server/fancontrolserver .
+          VER="${{ steps.get_version.outputs.VERSION }}"
+          VER="${VER#v}"
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
+            -ldflags "-s -w -X fancontrolserver/internal/version.Version=${VER}" \
+            -o ../app/server/fancontrolserver .
 
       # 备份 config 和 manifest（manifest 在项目根目录）
       - name: Backup UI config and manifest
@@ -86,7 +90,11 @@ jobs:
       - name: Build Backend (arm64)
         run: |
           cd backend
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o ../app/server/fancontrolserver .
+          VER="${{ steps.get_version.outputs.VERSION }}"
+          VER="${VER#v}"
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath \
+            -ldflags "-s -w -X fancontrolserver/internal/version.Version=${VER}" \
+            -o ../app/server/fancontrolserver .
 
       # --- 打包 arm64（platform 设为 arm） ---
       - name: Build arm64 URL Version
