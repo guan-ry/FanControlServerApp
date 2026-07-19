@@ -2,6 +2,7 @@ import "iconify-icon";
 import "./style.css";
 import * as echarts from "echarts";
 import {
+    checkUpdate,
     fetchConfig,
     fetchHistory,
     fetchInfo,
@@ -13,7 +14,7 @@ import {
     setFanMode,
     setGlobalConfig,
 } from "./api";
-import type {ConfigPayload, CurvePoint, DiskInfo, FanConfig, GlobalConfig, HistoryPoint, HistoryRange, HistorySeries, ScannedFan, Telemetry} from "./types";
+import type {ConfigPayload, CurvePoint, DiskInfo, FanConfig, GlobalConfig, HistoryPoint, HistoryRange, HistorySeries, ScannedFan, Telemetry, UpdateCheckResult} from "./types";
 
 const DEFAULT_CURVE: CurvePoint[] = [
     {temp: 45, pwm: 120},
@@ -1675,6 +1676,58 @@ function initHistoryChart() {
 }
 
 const symbolSize = 16;
+const CURVE_POINT_HIT_PX = 28;
+
+let editingCurvePointIndex = -1;
+let curvePointDragMoved = false;
+
+function findCurvePointIndexByPixel(offsetX: number, offsetY: number, threshold = CURVE_POINT_HIT_PX): number {
+    if (!fanCurveChart) return -1;
+    let best = -1;
+    let bestDist = threshold;
+    for (let i = 0; i < curveData.length; i++) {
+        const px = fanCurveChart.convertToPixel("grid", curveData[i]) as number[];
+        if (!px || px.length < 2) continue;
+        const dist = Math.hypot(px[0] - offsetX, px[1] - offsetY);
+        if (dist < bestDist) {
+            bestDist = dist;
+            best = i;
+        }
+    }
+    return best;
+}
+
+function openCurvePointEditDialog(dataIndex: number) {
+    if (dataIndex < 0 || dataIndex >= curveData.length) return;
+    editingCurvePointIndex = dataIndex;
+    const [temp, pwm] = curveData[dataIndex];
+    const dialog = document.getElementById("curve-point-edit-dialog") as HTMLDialogElement | null;
+    const tempInput = document.getElementById("curve-point-temp") as HTMLInputElement | null;
+    const pwmInput = document.getElementById("curve-point-pwm") as HTMLInputElement | null;
+    if (!dialog || !tempInput || !pwmInput) return;
+    tempInput.value = String(Math.round(temp));
+    pwmInput.value = String(Math.round(pwm));
+    dialog.showModal();
+    window.setTimeout(() => tempInput.focus(), 0);
+}
+
+function applyCurvePointEditFromDialog() {
+    if (editingCurvePointIndex < 0 || editingCurvePointIndex >= curveData.length) return;
+    const tempInput = document.getElementById("curve-point-temp") as HTMLInputElement | null;
+    const pwmInput = document.getElementById("curve-point-pwm") as HTMLInputElement | null;
+    if (!tempInput || !pwmInput) return;
+    const newTemp = Math.round(Math.max(0, Math.min(100, Number(tempInput.value))));
+    const newPwm = Math.round(Math.max(0, Math.min(255, Number(pwmInput.value))));
+    if (!Number.isFinite(newTemp) || !Number.isFinite(newPwm)) {
+        toast("请输入有效的温度与 PWM", "error");
+        return;
+    }
+    curveData[editingCurvePointIndex] = [newTemp, newPwm];
+    curveData.sort((a, b) => a[0] - b[0]);
+    editingCurvePointIndex = -1;
+    syncCurveToConfig();
+    updateFanCurveDataAndGraphic();
+}
 
 function initFanCurveChartShell() {
     if (fanCurveChart) return;
@@ -1740,9 +1793,18 @@ function initFanCurveChartShell() {
         });
         fanCurveChart.getZr().on("dblclick", (params: { offsetX: number; offsetY: number }) => {
             if (!fanCurveChart) return;
+            // 双击已有点位：只打开编辑，不新增
+            const nearIdx = findCurvePointIndexByPixel(params.offsetX, params.offsetY);
+            if (nearIdx !== -1) {
+                openCurvePointEditDialog(nearIdx);
+                return;
+            }
             const pt = fanCurveChart.convertFromPixel("grid", [params.offsetX, params.offsetY]) as number[];
             if (pt[0] >= 0 && pt[0] <= 100 && pt[1] >= 0 && pt[1] <= 255) {
-                curveData.push(pt);
+                curveData.push([
+                    Math.round(Math.max(0, Math.min(100, pt[0]))),
+                    Math.round(Math.max(0, Math.min(255, pt[1]))),
+                ]);
                 curveData.sort((a, b) => a[0] - b[0]);
                 syncCurveToConfig();
                 updateFanCurveDataAndGraphic();
@@ -1751,11 +1813,7 @@ function initFanCurveChartShell() {
         chartDom.addEventListener("contextmenu", e => {
             e.preventDefault();
             if (!fanCurveChart) return;
-            const pt = fanCurveChart.convertFromPixel("grid", [e.offsetX, e.offsetY]) as number[];
-            let idx = -1;
-            curveData.forEach((d, i) => {
-                if (Math.abs(d[0] - pt[0]) < 3 && Math.abs(d[1] - pt[1]) < 10) idx = i;
-            });
+            const idx = findCurvePointIndexByPixel(e.offsetX, e.offsetY);
             if (idx !== -1 && curveData.length > 2) {
                 curveData.splice(idx, 1);
                 syncCurveToConfig();
@@ -1789,12 +1847,24 @@ function updateFanCurveGraphic() {
     const g: any[] = curveData.map((item, dataIndex) => ({
         type: "circle",
         position: fanCurveChart!.convertToPixel("grid", item) as number[],
-        shape: {r: symbolSize / 1.5},
+        shape: {r: Math.max(symbolSize / 1.5, 18)},
         invisible: true,
         draggable: true,
         z: 100,
+        cursor: "pointer",
+        onmousedown() {
+            curvePointDragMoved = false;
+        },
         ondrag(this: any) {
+            curvePointDragMoved = true;
             onFanPointDrag(dataIndex, [this.x, this.y]);
+        },
+        onclick() {
+            if (curvePointDragMoved) {
+                curvePointDragMoved = false;
+                return;
+            }
+            openCurvePointEditDialog(dataIndex);
         },
         onmousemove() {
             fanCurveChart?.dispatchAction({type: "showTip", seriesIndex: 0, dataIndex});
@@ -2562,11 +2632,101 @@ async function refresh() {
     loadHistoryChart().catch(console.error);
 }
 
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const UPDATE_CHECK_THROTTLE_MS = 2500;
+
+let lastUpdateResult: UpdateCheckResult | null = null;
+let lastUpdateCheckAt = 0;
+let updateCheckInFlight = false;
+let lastManualCheckAt = 0;
+
+function applyUpdateCheckResult(res: UpdateCheckResult, opts?: { toastOnResult?: boolean }) {
+    lastUpdateResult = res;
+    lastUpdateCheckAt = Date.now();
+    const btn = document.getElementById("btn-update-available") as HTMLButtonElement | null;
+    if (btn) {
+        btn.classList.toggle("hidden", !res.has_update);
+    }
+    if (opts?.toastOnResult) {
+        if (!res.check_ok) {
+            toast(res.error || "检查更新失败", "error");
+        } else if (res.has_update) {
+            toast(`发现新版本 v${res.latest || "?"}`, "success");
+        } else {
+            toast("当前已是最新版本", "info");
+        }
+    }
+}
+
+function openUpdateNotesDialog() {
+    const res = lastUpdateResult;
+    if (!res?.has_update) return;
+    const dialog = document.getElementById("update-notes-dialog") as HTMLDialogElement | null;
+    const title = document.getElementById("update-notes-title");
+    const body = document.getElementById("update-notes-body");
+    const link = document.getElementById("update-notes-link") as HTMLAnchorElement | null;
+    if (!dialog || !title || !body || !link) return;
+    title.textContent = `新版本 v${res.latest || "?"}`;
+    body.textContent = (res.notes && res.notes.trim()) ? res.notes : "暂无更新说明";
+    if (res.url) {
+        link.href = res.url;
+        link.classList.remove("hidden");
+    } else {
+        link.href = "#";
+        link.classList.add("hidden");
+    }
+    dialog.showModal();
+}
+
+async function runUpdateCheck(force: boolean, toastOnResult: boolean) {
+    if (updateCheckInFlight) return;
+    updateCheckInFlight = true;
+    const btn = document.getElementById("btn-check-update") as HTMLButtonElement | null;
+    if (btn && force) btn.disabled = true;
+    try {
+        const res = await checkUpdate(force);
+        applyUpdateCheckResult(res, {toastOnResult});
+    } catch (e) {
+        console.error("[更新检查]", e);
+        if (toastOnResult) toast("检查更新失败", "error");
+    } finally {
+        updateCheckInFlight = false;
+        if (btn && force) btn.disabled = false;
+    }
+}
+
+function setupUpdateCheck() {
+    const availableBtn = document.getElementById("btn-update-available");
+    const checkBtn = document.getElementById("btn-check-update") as HTMLButtonElement | null;
+    const dialog = document.getElementById("update-notes-dialog") as HTMLDialogElement | null;
+    availableBtn?.addEventListener("click", () => openUpdateNotesDialog());
+    checkBtn?.addEventListener("click", () => {
+        const now = Date.now();
+        if (now - lastManualCheckAt < UPDATE_CHECK_THROTTLE_MS) return;
+        lastManualCheckAt = now;
+        void runUpdateCheck(true, true);
+    });
+    document.getElementById("update-notes-close")?.addEventListener("click", () => dialog?.close());
+    document.getElementById("update-notes-ok")?.addEventListener("click", () => dialog?.close());
+
+    void runUpdateCheck(false, false);
+    window.setInterval(() => {
+        void runUpdateCheck(false, false);
+    }, UPDATE_CHECK_INTERVAL_MS);
+
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState !== "visible") return;
+        if (Date.now() - lastUpdateCheckAt < UPDATE_CHECK_INTERVAL_MS) return;
+        void runUpdateCheck(false, false);
+    });
+}
+
 async function main() {
     updateSubtitleDate();
     window.setInterval(updateSubtitleDate, 1000);
 
     await initAuthMode();
+    setupUpdateCheck();
 
     const refreshBtn = $("btn-refresh") as HTMLButtonElement;
     const refreshIcon = $("btn-refresh-icon");
@@ -2590,6 +2750,18 @@ async function main() {
     $("donate-close").addEventListener("click", () => donateDialog.close());
     donateDialog.addEventListener("click", e => {
         if (e.target === donateDialog) donateDialog.close();
+    });
+
+    document.getElementById("curve-point-edit-form")?.addEventListener("submit", ev => {
+        const submitter = (ev as SubmitEvent).submitter as HTMLButtonElement | null;
+        if (submitter?.value === "ok") {
+            applyCurvePointEditFromDialog();
+        } else {
+            editingCurvePointIndex = -1;
+        }
+    });
+    document.getElementById("curve-point-edit-dialog")?.addEventListener("cancel", () => {
+        editingCurvePointIndex = -1;
     });
 
     $("btn-scan-fans").addEventListener("click", () => {

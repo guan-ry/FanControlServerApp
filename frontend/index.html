@@ -219,9 +219,15 @@
             <div class="w-12 h-12 bg-sky-500/10 rounded-md border border-sky-500/20 flex items-center justify-center flex-shrink-0">
                 <iconify-icon class="text-3xl text-sky-400" icon="mdi:snowflake"></iconify-icon>
             </div>
-            <div class="flex items-baseline gap-2 min-w-0">
+            <div class="flex items-baseline gap-2 min-w-0 flex-wrap">
                 <h1 class="text-2xl font-bold text-white tracking-tight">FanControlServer</h1>
                 <span id="app-version" class="text-sm text-slate-500 font-mono leading-none"></span>
+                <button type="button" id="btn-update-available" class="hidden text-sm text-sky-400 hover:text-sky-300 font-medium leading-none">
+                    有新版本
+                </button>
+                <button type="button" id="btn-check-update" class="text-xs text-slate-500 hover:text-slate-300 leading-none">
+                    检查更新
+                </button>
             </div>
         </div>
     </div>
@@ -851,9 +857,9 @@
                     <iconify-icon class="text-sky-400" icon="mdi:vector-curve"></iconify-icon>
                     调速曲线（本风扇）
                 </h4>
-                <p class="text-xs text-slate-500 mb-3">双击空白处 <span class="text-sky-400 font-bold">添加点</span> ·
-                    右键点位
-                    <span class="text-red-400 font-bold">删除点</span> · 拖拽调整</p>
+                <p class="text-xs text-slate-500 mb-3">单击点位 <span class="text-sky-400 font-bold">输入数值</span> ·
+                    双击空白处 <span class="text-sky-400 font-bold">添加点</span> ·
+                    右键点位 <span class="text-red-400 font-bold">删除点</span> · 可拖拽</p>
                 <div class="w-full h-[360px] bg-slate-900/40 rounded-2xl border border-slate-700/30"
                      id="fan-curve-editor"></div>
             </div>
@@ -870,6 +876,31 @@
             </button>
         </div>
     </div>
+</dialog>
+
+<!-- 曲线点位数值编辑（方便触屏） -->
+<dialog id="curve-point-edit-dialog"
+        class="rounded-2xl bg-slate-900 text-slate-100 border border-slate-600 p-0 backdrop:bg-black/60 max-w-sm w-[92vw] shadow-xl">
+    <form id="curve-point-edit-form" method="dialog" class="p-6">
+        <h3 class="text-lg font-bold text-white mb-1">编辑曲线点</h3>
+        <p class="text-xs text-slate-400 mb-4">输入温度与 PWM，适合触屏精确调整</p>
+        <div class="space-y-3">
+            <div>
+                <label class="block text-xs text-slate-400 mb-1" for="curve-point-temp">温度 (°C)</label>
+                <input id="curve-point-temp" type="number" min="0" max="100" step="1" required
+                       class="w-full rounded-lg bg-slate-800 border border-slate-600 px-3 py-2 text-sm text-white focus:border-sky-400 outline-none"/>
+            </div>
+            <div>
+                <label class="block text-xs text-slate-400 mb-1" for="curve-point-pwm">PWM (0–255)</label>
+                <input id="curve-point-pwm" type="number" min="0" max="255" step="1" required
+                       class="w-full rounded-lg bg-slate-800 border border-slate-600 px-3 py-2 text-sm text-white focus:border-sky-400 outline-none"/>
+            </div>
+        </div>
+        <div class="flex flex-wrap justify-end gap-2 mt-6">
+            <button type="submit" value="cancel" class="px-4 py-2 rounded-lg bg-slate-700 text-sm">取消</button>
+            <button type="submit" value="ok" class="px-4 py-2 rounded-lg bg-sky-600 text-sm text-white">确定</button>
+        </div>
+    </form>
 </dialog>
 
 <!-- 支持作者：收款码弹窗（与页面样式统一） -->
@@ -898,6 +929,40 @@
         </div>
         <div class="mt-4 pt-3 border-t border-slate-700/50 text-center">
             <p class="text-[11px] text-slate-500">你的每一份支持都是我前进的动力</p>
+        </div>
+    </div>
+</dialog>
+
+<!-- 新版本更新说明 -->
+<dialog id="update-notes-dialog"
+        class="rounded-2xl bg-slate-900 text-slate-100 border border-slate-600 p-0 backdrop:bg-black/60 max-w-lg w-[92vw] shadow-xl">
+    <div class="p-6 flex flex-col max-h-[80vh]">
+        <div class="flex items-center justify-between mb-4 flex-shrink-0">
+            <div class="flex items-center gap-3 min-w-0">
+                <div class="w-10 h-10 flex items-center justify-center bg-sky-500/10 rounded-xl border border-sky-500/20 flex-shrink-0">
+                    <iconify-icon class="text-2xl text-sky-400" icon="mdi:update"></iconify-icon>
+                </div>
+                <div class="min-w-0">
+                    <h3 id="update-notes-title" class="text-lg font-bold text-white truncate">新版本</h3>
+                    <p class="text-xs text-slate-400">更新说明</p>
+                </div>
+            </div>
+            <button type="button" id="update-notes-close"
+                    class="p-1.5 hover:bg-slate-700 rounded-md text-slate-400 transition-colors flex-shrink-0">
+                <iconify-icon class="text-xl" icon="mdi:close"></iconify-icon>
+            </button>
+        </div>
+        <pre id="update-notes-body"
+             class="flex-1 overflow-y-auto text-sm text-slate-300 whitespace-pre-wrap break-words font-sans bg-slate-950/50 rounded-xl border border-slate-700/50 p-4 mb-4"></pre>
+        <div class="flex justify-end gap-2 flex-shrink-0">
+            <a id="update-notes-link" href="#" target="_blank" rel="noopener noreferrer"
+               class="px-4 py-2 text-sm rounded-xl bg-sky-500 hover:bg-sky-400 text-white transition-colors">
+                前往 GitHub Release
+            </a>
+            <button type="button" id="update-notes-ok"
+                    class="px-4 py-2 text-sm rounded-xl bg-slate-800 border border-slate-600 hover:border-sky-400 transition-colors">
+                关闭
+            </button>
         </div>
     </div>
 </dialog>

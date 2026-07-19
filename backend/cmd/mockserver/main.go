@@ -304,9 +304,21 @@ func main() {
 		c.JSON(http.StatusOK, cfg)
 	})
 
+	api.GET("/update/check", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"current":    version.Version,
+			"latest":     version.Version,
+			"has_update": true,
+			"url":        "https://www.baidu.com",
+			"notes":      "优先版本了,快去更新",
+			"checked_at": time.Now(),
+			"check_ok":   true,
+		})
+	})
+
 	api.POST("/fan/config", func(c *gin.Context) {
 		var cfg model.Config
-		if err := c.ShouldBindJSON(&cfg); err != nil {
+		if err = c.ShouldBindJSON(&cfg); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}

@@ -109,6 +109,17 @@ export interface HistorySeries {
 
 export type HistoryRange = "1h" | "6h" | "24h" | "7d" | "custom";
 
+export interface UpdateCheckResult {
+    current: string;
+    latest?: string;
+    has_update: boolean;
+    url?: string;
+    notes?: string;
+    checked_at: string;
+    check_ok: boolean;
+    error?: string;
+}
+
 export interface Telemetry {
     cpu_temp?: number;
     cpu_usage: number;

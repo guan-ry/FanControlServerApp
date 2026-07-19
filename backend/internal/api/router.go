@@ -12,6 +12,7 @@ import (
 	"fancontrolserver/internal/logging"
 	"fancontrolserver/internal/model"
 	"fancontrolserver/internal/service"
+	"fancontrolserver/internal/update"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -22,6 +23,7 @@ type handler struct {
 	controller *service.Controller
 	store      *service.Store
 	auth       *AuthManager
+	updater    *update.Checker
 	upgrader   websocket.Upgrader
 }
 
@@ -36,6 +38,7 @@ func NewRouter(staticFS fs.FS, controller *service.Controller, store *service.St
 		controller: controller,
 		store:      store,
 		auth:       auth,
+		updater:    update.NewChecker(),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -76,6 +79,7 @@ func NewRouter(staticFS fs.FS, controller *service.Controller, store *service.St
 		apiRead.GET("/device/history", h.deviceHistory)
 		apiRead.GET("/device/scan", h.deviceScan)
 		apiRead.GET("/fan/config", h.fanConfig)
+		apiRead.GET("/update/check", h.updateCheck)
 		apiRead.GET("/ws", h.ws)
 	}
 
@@ -252,6 +256,11 @@ func (h *handler) setGlobalConfig(c *gin.Context) {
 		logging.SetLevel(req.LogLevel)
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (h *handler) updateCheck(c *gin.Context) {
+	force := c.Query("force") == "1" || strings.EqualFold(c.Query("force"), "true")
+	c.JSON(http.StatusOK, h.updater.Check(force))
 }
 
 func (h *handler) ws(c *gin.Context) {
