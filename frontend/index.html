@@ -853,13 +853,20 @@
             </div>
 
             <div class="mt-8 pt-6 border-t border-slate-700">
-                <h4 class="text-sm font-bold mb-2 flex items-center gap-2">
-                    <iconify-icon class="text-sky-400" icon="mdi:vector-curve"></iconify-icon>
-                    调速曲线（本风扇）
-                </h4>
-                <p class="text-xs text-slate-500 mb-3">单击点位 <span class="text-sky-400 font-bold">输入数值</span> ·
-                    双击空白处 <span class="text-sky-400 font-bold">添加点</span> ·
-                    右键点位 <span class="text-red-400 font-bold">删除点</span> · 可拖拽</p>
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <h4 class="text-sm font-bold flex items-center gap-2">
+                        <iconify-icon class="text-sky-400" icon="mdi:vector-curve"></iconify-icon>
+                        调速曲线（本风扇）
+                    </h4>
+                    <button type="button" id="curve-points-edit-btn"
+                            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium transition-colors">
+                        <iconify-icon icon="mdi:playlist-edit" class="text-base"></iconify-icon>
+                        编辑点位
+                    </button>
+                </div>
+                <p class="text-xs text-slate-500 mb-3">
+                    「编辑点位」增减数值 · 单击编辑 · 拖拽调整 · 电脑可双击加点、右键删点
+                </p>
                 <div class="w-full h-[360px] bg-slate-900/40 rounded-2xl border border-slate-700/30"
                      id="fan-curve-editor"></div>
             </div>
@@ -878,7 +885,32 @@
     </div>
 </dialog>
 
-<!-- 曲线点位数值编辑（方便触屏） -->
+<!-- 曲线点位列表编辑（触屏友好：增减 + 设值） -->
+<dialog id="curve-points-dialog"
+        class="rounded-2xl bg-slate-900 text-slate-100 border border-slate-600 p-0 backdrop:bg-black/60 max-w-md w-[94vw] shadow-xl">
+    <div class="p-5 sm:p-6">
+        <h3 class="text-lg font-bold text-white mb-1">编辑曲线点位</h3>
+        <p class="text-xs text-slate-400 mb-4">可添加、移除点，并直接修改温度与 PWM</p>
+        <div class="flex items-center gap-2 text-[11px] text-slate-500 mb-2 px-1">
+            <span class="w-8">#</span>
+            <span class="flex-1">温度 (°C)</span>
+            <span class="flex-1">PWM</span>
+            <span class="w-9"></span>
+        </div>
+        <div id="curve-points-list" class="space-y-2 max-h-[50vh] overflow-y-auto mb-4"></div>
+        <button type="button" id="curve-points-add"
+                class="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg border border-dashed border-slate-600 text-slate-300 text-sm hover:bg-slate-800/80 hover:border-sky-500/50 hover:text-sky-300 transition-colors mb-5">
+            <iconify-icon icon="mdi:plus" class="text-base"></iconify-icon>
+            添加点
+        </button>
+        <div class="flex flex-wrap justify-end gap-2">
+            <button type="button" id="curve-points-cancel" class="px-4 py-2 rounded-lg bg-slate-700 text-sm">取消</button>
+            <button type="button" id="curve-points-apply" class="px-4 py-2 rounded-lg bg-sky-600 text-sm text-white">应用</button>
+        </div>
+    </div>
+</dialog>
+
+<!-- 曲线点位数值编辑（单击图表点时） -->
 <dialog id="curve-point-edit-dialog"
         class="rounded-2xl bg-slate-900 text-slate-100 border border-slate-600 p-0 backdrop:bg-black/60 max-w-sm w-[92vw] shadow-xl">
     <form id="curve-point-edit-form" method="dialog" class="p-6">

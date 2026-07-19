@@ -1680,6 +1680,8 @@ const CURVE_POINT_HIT_PX = 28;
 
 let editingCurvePointIndex = -1;
 let curvePointDragMoved = false;
+/** 「编辑点位」弹窗中的草稿，取消不写回 */
+let curvePointsDraft: number[][] = [];
 
 function findCurvePointIndexByPixel(offsetX: number, offsetY: number, threshold = CURVE_POINT_HIT_PX): number {
     if (!fanCurveChart) return -1;
@@ -1695,6 +1697,103 @@ function findCurvePointIndexByPixel(offsetX: number, offsetY: number, threshold 
         }
     }
     return best;
+}
+
+function suggestCurvePointForDraft(draft: number[][]): [number, number] {
+    if (draft.length === 0) return [50, 128];
+    const sorted = [...draft].sort((a, b) => a[0] - b[0]);
+    if (sorted.length === 1) {
+        const [t, p] = sorted[0];
+        return [Math.min(100, t + 10), p];
+    }
+    let bestI = 0;
+    let bestGap = -1;
+    for (let i = 0; i < sorted.length - 1; i++) {
+        const gap = sorted[i + 1][0] - sorted[i][0];
+        if (gap > bestGap) {
+            bestGap = gap;
+            bestI = i;
+        }
+    }
+    const [t0, p0] = sorted[bestI];
+    const [t1, p1] = sorted[bestI + 1];
+    const temp = Math.round((t0 + t1) / 2);
+    const pwm = t1 === t0 ? p0 : Math.round(p0 + (p1 - p0) * ((temp - t0) / (t1 - t0)));
+    return [
+        Math.max(0, Math.min(100, temp)),
+        Math.max(0, Math.min(255, pwm)),
+    ];
+}
+
+function syncCurvePointsDraftFromInputs() {
+    const list = document.getElementById("curve-points-list");
+    if (!list) return;
+    const rows = list.querySelectorAll<HTMLElement>("[data-curve-point-row]");
+    const next: number[][] = [];
+    rows.forEach(row => {
+        const tempEl = row.querySelector<HTMLInputElement>("input[data-curve-temp]");
+        const pwmEl = row.querySelector<HTMLInputElement>("input[data-curve-pwm]");
+        const temp = Math.round(Number(tempEl?.value));
+        const pwm = Math.round(Number(pwmEl?.value));
+        next.push([
+            Number.isFinite(temp) ? Math.max(0, Math.min(100, temp)) : 0,
+            Number.isFinite(pwm) ? Math.max(0, Math.min(255, pwm)) : 0,
+        ]);
+    });
+    curvePointsDraft = next;
+}
+
+function renderCurvePointsList() {
+    const list = document.getElementById("curve-points-list");
+    if (!list) return;
+    if (curvePointsDraft.length === 0) {
+        list.innerHTML = `<p class="text-sm text-slate-500 text-center py-4">暂无点位，请点击下方添加</p>`;
+        return;
+    }
+    list.innerHTML = curvePointsDraft.map((pt, i) => {
+        const canRemove = curvePointsDraft.length > 2;
+        return `
+<div class="flex items-center gap-2" data-curve-point-row="${i}">
+    <span class="w-8 text-xs text-slate-500 tabular-nums shrink-0">${i + 1}</span>
+    <input type="number" data-curve-temp min="0" max="100" step="1" value="${Math.round(pt[0])}"
+           class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-600 px-2.5 py-2 text-sm text-white focus:border-sky-400 outline-none"/>
+    <input type="number" data-curve-pwm min="0" max="255" step="1" value="${Math.round(pt[1])}"
+           class="flex-1 min-w-0 rounded-lg bg-slate-800 border border-slate-600 px-2.5 py-2 text-sm text-white focus:border-sky-400 outline-none"/>
+    <button type="button" data-curve-remove="${i}" ${canRemove ? "" : "disabled"}
+            class="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-lg text-red-300 ${
+            canRemove ? "bg-red-900/40 hover:bg-red-900/60" : "bg-slate-800 text-slate-600 cursor-not-allowed"
+        }" title="移除">
+        <iconify-icon icon="mdi:trash-can-outline" class="text-lg"></iconify-icon>
+    </button>
+</div>`;
+    }).join("");
+}
+
+function openCurvePointsDialog() {
+    curvePointsDraft = curveData.map(p => [p[0], p[1]]);
+    renderCurvePointsList();
+    const dialog = document.getElementById("curve-points-dialog") as HTMLDialogElement | null;
+    dialog?.showModal();
+}
+
+function applyCurvePointsDialog() {
+    syncCurvePointsDraftFromInputs();
+    if (curvePointsDraft.length < 2) {
+        toast("至少需要 2 个曲线点", "error");
+        return false;
+    }
+    for (const [temp, pwm] of curvePointsDraft) {
+        if (!Number.isFinite(temp) || !Number.isFinite(pwm)) {
+            toast("请输入有效的温度与 PWM", "error");
+            return false;
+        }
+    }
+    curveData = curvePointsDraft
+        .map(([t, p]) => [Math.round(Math.max(0, Math.min(100, t))), Math.round(Math.max(0, Math.min(255, p)))])
+        .sort((a, b) => a[0] - b[0]);
+    syncCurveToConfig();
+    updateFanCurveDataAndGraphic();
+    return true;
 }
 
 function openCurvePointEditDialog(dataIndex: number) {
@@ -1810,9 +1909,16 @@ function initFanCurveChartShell() {
                 updateFanCurveDataAndGraphic();
             }
         });
+        // 触屏长按也会触发 contextmenu；仅真正的鼠标右键才删点
+        let curveLastTouchAt = 0;
+        chartDom.addEventListener("touchstart", () => {
+            curveLastTouchAt = Date.now();
+        }, {passive: true});
         chartDom.addEventListener("contextmenu", e => {
             e.preventDefault();
             if (!fanCurveChart) return;
+            if (Date.now() - curveLastTouchAt < 1000) return;
+            if (window.matchMedia("(pointer: coarse)").matches) return;
             const idx = findCurvePointIndexByPixel(e.offsetX, e.offsetY);
             if (idx !== -1 && curveData.length > 2) {
                 curveData.splice(idx, 1);
@@ -2768,6 +2874,34 @@ async function main() {
     });
     document.getElementById("curve-point-edit-dialog")?.addEventListener("cancel", () => {
         editingCurvePointIndex = -1;
+    });
+
+    const curvePointsDialog = document.getElementById("curve-points-dialog") as HTMLDialogElement | null;
+    document.getElementById("curve-points-edit-btn")?.addEventListener("click", () => openCurvePointsDialog());
+    document.getElementById("curve-points-cancel")?.addEventListener("click", () => curvePointsDialog?.close());
+    document.getElementById("curve-points-apply")?.addEventListener("click", () => {
+        if (applyCurvePointsDialog()) curvePointsDialog?.close();
+    });
+    document.getElementById("curve-points-add")?.addEventListener("click", () => {
+        syncCurvePointsDraftFromInputs();
+        curvePointsDraft.push(suggestCurvePointForDraft(curvePointsDraft));
+        renderCurvePointsList();
+    });
+    document.getElementById("curve-points-list")?.addEventListener("click", e => {
+        const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-curve-remove]");
+        if (!btn || btn.disabled) return;
+        const idx = Number(btn.dataset.curveRemove);
+        if (!Number.isFinite(idx)) return;
+        syncCurvePointsDraftFromInputs();
+        if (curvePointsDraft.length <= 2) {
+            toast("至少保留 2 个曲线点", "info");
+            return;
+        }
+        curvePointsDraft.splice(idx, 1);
+        renderCurvePointsList();
+    });
+    curvePointsDialog?.addEventListener("click", e => {
+        if (e.target === curvePointsDialog) curvePointsDialog.close();
     });
 
     $("btn-scan-fans").addEventListener("click", () => {
