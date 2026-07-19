@@ -88,7 +88,11 @@ func (h *HistoryStore) RecordSnapshot(t model.Telemetry) {
 	h.recordPoint("gpu_temp", ts, t.GPUTemp)
 	h.recordPoint("disk_avg", ts, t.Disks.AvgTemp)
 	for _, s := range t.Sensors {
-		h.recordPoint(s.ID, ts, s.Temp)
+		if s.Kind == model.SensorKindVolt {
+			h.recordPoint(s.ID, ts, s.Volt)
+		} else {
+			h.recordPoint(s.ID, ts, s.Temp)
+		}
 	}
 	for _, f := range t.Fans {
 		pwm := float64(f.PWM)

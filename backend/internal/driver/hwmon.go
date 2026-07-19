@@ -170,6 +170,63 @@ func (d *HWMONDriver) ReadTemp(path string) (*float64, error) {
 	return &t, nil
 }
 
+// VoltChannel 描述一个 hwmon 电压通道的元数据。
+type VoltChannel struct {
+	ID     string
+	Chip   string
+	Device string
+	Key    string
+	Label  string
+	Path   string
+}
+
+// ScanVoltChannels 扫描所有 hwmon 电压通道（in*_input）。
+func (d *HWMONDriver) ScanVoltChannels() ([]VoltChannel, error) {
+	entries, err := filepath.Glob("/sys/class/hwmon/hwmon*/in*_input")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]VoltChannel, 0, len(entries))
+	for _, p := range entries {
+		dir := filepath.Dir(p)
+		key := strings.TrimSuffix(filepath.Base(p), "_input")
+		chip := readTrimmed(filepath.Join(dir, "name"), filepath.Base(dir))
+
+		device := ""
+		if link, err := os.Readlink(filepath.Join(dir, "device")); err == nil {
+			device = filepath.Base(link)
+		}
+
+		label := readTrimmed(filepath.Join(dir, key+"_label"), "")
+
+		out = append(out, VoltChannel{
+			ID:     chip + "/" + device + "/" + key,
+			Chip:   chip,
+			Device: device,
+			Key:    key,
+			Label:  label,
+			Path:   p,
+		})
+	}
+	return out, nil
+}
+
+// ReadVolt 读取单个电压通道（mV → V），过滤明显异常值。
+func (d *HWMONDriver) ReadVolt(path string) (*float64, error) {
+	if err := ValidateHwmonPath(path); err != nil {
+		return nil, err
+	}
+	raw, err := readIntFile(path)
+	if err != nil {
+		return nil, err
+	}
+	v := float64(raw) / 1000.0
+	if v < 0 || v > 100 {
+		return nil, fmt.Errorf("电压异常：%.3fV", v)
+	}
+	return &v, nil
+}
+
 func readTrimmed(path, def string) string {
 	if raw, err := os.ReadFile(path); err == nil {
 		if s := strings.TrimSpace(string(raw)); s != "" {

@@ -33,6 +33,7 @@ type Controller struct {
 	loopDoneCh     chan struct{}
 	startTime      time.Time
 	sensorChans    []driver.TempChannel // 缓存 hwmon 温度通道列表
+	voltChans      []driver.VoltChannel // 缓存 hwmon 电压通道列表
 	lastSensorScan time.Time            // 上次扫描时间
 }
 
@@ -249,17 +250,22 @@ func (c *Controller) collectAndApply(cfg model.Config) model.Telemetry {
 	}
 }
 
-// readSensors 读取所有 hwmon 温度通道。通道列表每分钟刷新一次，避免每秒 Glob。
+// readSensors 读取所有 hwmon 温度与电压通道。通道列表每分钟刷新一次，避免每秒 Glob。
 func (c *Controller) readSensors() []model.SensorReading {
 	if time.Since(c.lastSensorScan) > time.Minute || c.sensorChans == nil {
 		if chans, err := c.hwmon.ScanTempChannels(); err == nil {
 			c.sensorChans = chans
-			c.lastSensorScan = time.Now()
 		} else {
 			logrus.Debugf("[传感器] 扫描温度通道失败：%v", err)
 		}
+		if vchans, err := c.hwmon.ScanVoltChannels(); err == nil {
+			c.voltChans = vchans
+		} else {
+			logrus.Debugf("[传感器] 扫描电压通道失败：%v", err)
+		}
+		c.lastSensorScan = time.Now()
 	}
-	out := make([]model.SensorReading, 0, len(c.sensorChans))
+	out := make([]model.SensorReading, 0, len(c.sensorChans)+len(c.voltChans))
 	for _, ch := range c.sensorChans {
 		v, _ := c.hwmon.ReadTemp(ch.Path)
 		out = append(out, model.SensorReading{
@@ -268,7 +274,20 @@ func (c *Controller) readSensors() []model.SensorReading {
 			Device: ch.Device,
 			Key:    ch.Key,
 			Label:  ch.Label,
+			Kind:   model.SensorKindTemp,
 			Temp:   v,
+		})
+	}
+	for _, ch := range c.voltChans {
+		v, _ := c.hwmon.ReadVolt(ch.Path)
+		out = append(out, model.SensorReading{
+			ID:     ch.ID,
+			Chip:   ch.Chip,
+			Device: ch.Device,
+			Key:    ch.Key,
+			Label:  ch.Label,
+			Kind:   model.SensorKindVolt,
+			Volt:   v,
 		})
 	}
 	return out
@@ -507,6 +526,9 @@ func (c *Controller) resolveSourceTemp(
 			consider(disk.Temp)
 		}
 		for _, s := range sensors {
+			if s.Kind == model.SensorKindVolt {
+				continue
+			}
 			consider(s.Temp)
 		}
 		return best
@@ -524,7 +546,7 @@ func (c *Controller) resolveSourceTemp(
 	case strings.HasPrefix(source, "sensor:"):
 		id := source[len("sensor:"):]
 		for _, s := range sensors {
-			if s.ID == id && s.Temp != nil {
+			if s.ID == id && s.Kind != model.SensorKindVolt && s.Temp != nil {
 				v := *s.Temp
 				return &v
 			}

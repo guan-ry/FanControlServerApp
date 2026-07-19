@@ -110,7 +110,18 @@ func wave(base, amp float64, tick, period int) float64 {
 
 func makeSensor(id, chip, dev, key, label string, t float64) model.SensorReading {
 	v := t
-	return model.SensorReading{ID: id, Chip: chip, Device: dev, Key: key, Label: label, Temp: &v}
+	return model.SensorReading{
+		ID: id, Chip: chip, Device: dev, Key: key, Label: label,
+		Kind: model.SensorKindTemp, Temp: &v,
+	}
+}
+
+func makeVoltSensor(id, chip, dev, key, label string, volts float64) model.SensorReading {
+	v := volts
+	return model.SensorReading{
+		ID: id, Chip: chip, Device: dev, Key: key, Label: label,
+		Kind: model.SensorKindVolt, Volt: &v,
+	}
 }
 
 func interpCurve(curve []model.CurvePoint, t float64) int {
@@ -183,6 +194,15 @@ func (s *mockState) buildTelemetry() model.Telemetry {
 
 		// WiFi 网卡
 		makeSensor("iwlwifi_1//temp1", "iwlwifi_1", "", "temp1", "", wave(50, 4, tick, 16)),
+
+		// 主板电压（Nuvoton nct6798）
+		makeVoltSensor("nct6798//in0", "nct6798", "", "in0", "Vcore", wave(1.05, 0.05, tick, 40)),
+		makeVoltSensor("nct6798//in1", "nct6798", "", "in1", "AVCC", wave(3.30, 0.02, tick, 50)),
+		makeVoltSensor("nct6798//in2", "nct6798", "", "in2", "+3.3V", wave(3.31, 0.03, tick, 45)),
+		makeVoltSensor("nct6798//in3", "nct6798", "", "in3", "+5V", wave(5.02, 0.05, tick, 55)),
+		makeVoltSensor("nct6798//in4", "nct6798", "", "in4", "+12V", wave(12.05, 0.1, tick, 60)),
+		makeVoltSensor("nct6798//in5", "nct6798", "", "in5", "3VSB", wave(3.28, 0.02, tick, 48)),
+		makeVoltSensor("nct6798//in6", "nct6798", "", "in6", "VBAT", wave(3.10, 0.01, tick, 80)),
 	}
 
 	fans := make([]model.FanRuntime, 0, len(cfg.Fans))

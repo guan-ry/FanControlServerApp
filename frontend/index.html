@@ -391,7 +391,7 @@
         <div id="fan-root" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
     </section>
 
-    <!-- 历史曲线：温度 / 风扇 Tab -->
+    <!-- 历史曲线：温度 / 电压 / 风扇 Tab -->
     <section class="glass-card p-6">
         <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
             <div class="flex flex-wrap items-center gap-3">
@@ -403,6 +403,10 @@
                     <button type="button" data-history-view="temp"
                             class="history-view-tab px-3 py-1 rounded-md transition-colors bg-sky-600 text-white">
                         温度
+                    </button>
+                    <button type="button" data-history-view="volt"
+                            class="history-view-tab px-3 py-1 rounded-md transition-colors text-slate-400 hover:text-white">
+                        电压
                     </button>
                     <button type="button" data-history-view="fan"
                             class="history-view-tab px-3 py-1 rounded-md transition-colors text-slate-400 hover:text-white">
@@ -440,6 +444,18 @@
                     <div id="history-sensor-dropdown"
                          class="hidden absolute right-0 top-full mt-1 z-50 min-w-[14rem] max-w-[20rem] rounded-xl border border-slate-700/80 bg-slate-900/95 shadow-xl backdrop-blur-sm p-2">
                         <div id="history-sensor-toggles" class="flex flex-col gap-1 max-h-64 overflow-y-auto"></div>
+                    </div>
+                </div>
+                <div class="relative hidden" id="history-volts-wrap">
+                    <button type="button" id="history-volts-toggle"
+                            class="inline-flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 hover:bg-slate-700/80 transition-colors focus:outline-none focus:ring-1 focus:ring-sky-500">
+                        <iconify-icon icon="mdi:flash"></iconify-icon>
+                        <span id="history-volts-toggle-label">电压</span>
+                        <iconify-icon id="history-volts-chevron" class="text-base" icon="mdi:chevron-down"></iconify-icon>
+                    </button>
+                    <div id="history-volt-dropdown"
+                         class="hidden absolute right-0 top-full mt-1 z-50 min-w-[14rem] max-w-[20rem] rounded-xl border border-slate-700/80 bg-slate-900/95 shadow-xl backdrop-blur-sm p-2">
+                        <div id="history-volt-toggles" class="flex flex-col gap-1 max-h-64 overflow-y-auto"></div>
                     </div>
                 </div>
                 <div class="relative hidden" id="history-fans-wrap">
@@ -568,14 +584,15 @@
             </button>
             <div id="sensor-mgr-panel" class="hidden">
                 <p class="text-xs text-slate-500 mb-3">
-                    可以给传感器起别名（在温度源下拉中显示），或隐藏不需要的通道。修改后需点击底部「应用并保存更改」生效。</p>
+                    温度与电压通道均在此管理：可起别名或隐藏。温度别名会出现在温度源下拉中；电压别名用于历史电压曲线。修改后需点击底部「应用并保存更改」生效。</p>
                 <div class="overflow-x-auto max-h-80 overflow-y-auto border border-slate-700 rounded-lg">
                     <table class="w-full text-xs text-left">
                         <thead class="bg-slate-800/80 sticky top-0 z-10">
                         <tr class="text-slate-400 border-b border-slate-700">
                             <th class="p-2">芯片</th>
                             <th class="p-2">通道</th>
-                            <th class="p-2">温度</th>
+                            <th class="p-2">类型</th>
+                            <th class="p-2">读数</th>
                             <th class="p-2">别名</th>
                             <th class="p-2 text-center">隐藏</th>
                         </tr>

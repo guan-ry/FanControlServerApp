@@ -50,16 +50,26 @@ let historyRefreshTimer: number | null = null;
 let historySpanHours = 1;
 let historyTimeMin = 0;
 let historyTimeMax = 0;
-type HistoryView = "temp" | "fan";
+type HistoryView = "temp" | "fan" | "volt";
 let historyView: HistoryView = "temp";
 const historyRangeOptions: HistoryRange[] = ["1h", "6h", "24h", "7d", "custom"];
 const historySensorSelected = new Set<string>();
 const historyFanSelected = new Set<string>();
+const historyVoltSelected = new Set<string>();
+
+function isVoltSensor(s: {kind?: string}): boolean {
+    return s.kind === "volt";
+}
+
+function isTempSensor(s: {kind?: string}): boolean {
+    return !isVoltSensor(s);
+}
 
 function syncHistoryPrefsToConfig() {
     config.global.history_range = historyRange;
     config.global.history_sensors = [...historySensorSelected];
     config.global.history_fans = [...historyFanSelected];
+    config.global.history_volts = [...historyVoltSelected];
     if (historyRange === "custom") {
         const fromEl = document.getElementById("history-from") as HTMLInputElement | null;
         const toEl = document.getElementById("history-to") as HTMLInputElement | null;
@@ -86,14 +96,15 @@ function applyHistoryPrefsFromConfig() {
     }
 
     const hiddenSensors = new Set(config.global.sensor_hidden ?? []);
-    const knownSensors = new Set((telemetry?.sensors ?? []).map(s => s.id));
+    const knownTempSensors = new Set((telemetry?.sensors ?? []).filter(isTempSensor).map(s => s.id));
+    const knownVoltSensors = new Set((telemetry?.sensors ?? []).filter(isVoltSensor).map(s => s.id));
     historySensorSelected.clear();
     if (g.history_sensors == null) {
         // 从未配置：不强行勾选扩展传感器
     } else {
         for (const id of g.history_sensors) {
             if (hiddenSensors.has(id)) continue;
-            if (knownSensors.size > 0 && !knownSensors.has(id)) continue;
+            if (knownTempSensors.size > 0 && !knownTempSensors.has(id)) continue;
             historySensorSelected.add(id);
         }
     }
@@ -112,6 +123,20 @@ function applyHistoryPrefsFromConfig() {
         }
     }
 
+    historyVoltSelected.clear();
+    if (g.history_volts == null) {
+        // 从未配置：默认勾选前 5 个可见电压传感器
+        for (const s of (telemetry?.sensors ?? []).filter(isVoltSensor).filter(s => !hiddenSensors.has(s.id)).slice(0, 5)) {
+            historyVoltSelected.add(s.id);
+        }
+    } else {
+        for (const id of g.history_volts) {
+            if (hiddenSensors.has(id)) continue;
+            if (knownVoltSensors.size > 0 && !knownVoltSensors.has(id)) continue;
+            historyVoltSelected.add(id);
+        }
+    }
+
     const rangeEl = document.getElementById("history-range") as HTMLSelectElement | null;
     if (rangeEl) rangeEl.value = historyRange;
 
@@ -126,6 +151,7 @@ function applyHistoryPrefsFromConfig() {
     setupHistoryRefreshTimer();
     updateHistorySensorsButtonLabel();
     updateHistoryFansButtonLabel();
+    updateHistoryVoltsButtonLabel();
     applyHistoryViewUI();
     renderHistoryLegend();
 }
@@ -453,6 +479,20 @@ function pairsToCurve(pairs: number[][]): CurvePoint[] {
 
 function applyTelemetry(t: Telemetry) {
     telemetry = t;
+    // history_volts 未配置时，遥测首次带上电压通道后再默认勾选前 5 个
+    if (config.global.history_volts == null && historyVoltSelected.size === 0) {
+        const hidden = new Set(config.global.sensor_hidden ?? []);
+        for (const s of t.sensors.filter(isVoltSensor).filter(s => !hidden.has(s.id)).slice(0, 5)) {
+            historyVoltSelected.add(s.id);
+        }
+        if (historyVoltSelected.size > 0) {
+            updateHistoryVoltsButtonLabel();
+            if (historyView === "volt") {
+                renderHistoryLegend();
+                updateHistoryChart();
+            }
+        }
+    }
     $("cpu-temp-text").textContent = formatTemp(t.cpu_temp);
     updateRingProgress("cpu-ring", t.cpu_usage);
     $("cpu-ring-text").textContent = `${t.cpu_usage.toFixed(0)}%`;
@@ -736,7 +776,8 @@ function collectSourceGroups(mode: "simple" | "advanced"): SourceGroup[] {
     const allSensors = telemetry?.sensors ?? [];
     const hidden = new Set(config.global.sensor_hidden ?? []);
     const aliases = config.global.sensor_aliases ?? {};
-    const sensors = allSensors.filter(s => !hidden.has(s.id));
+    // 电压仅展示/历史，不可作风扇温度源
+    const sensors = allSensors.filter(s => !hidden.has(s.id) && isTempSensor(s));
     if (mode === "simple") {
         const cpuSensor = config.global.cpu_sensor;
         const gpuSensor = config.global.gpu_sensor;
@@ -1018,6 +1059,18 @@ function formatHistoryTemp(v: number | null | undefined): string {
     return `${v.toFixed(1)}°C`;
 }
 
+function formatHistoryVolt(v: number | null | undefined): string {
+    if (v == null || !Number.isFinite(v)) return "—";
+    return `${v.toFixed(3)}V`;
+}
+
+function formatSensorReading(s: {kind?: string; temp?: number; volt?: number}): string {
+    if (isVoltSensor(s)) {
+        return s.volt != null ? `${s.volt.toFixed(3)}V` : "—";
+    }
+    return s.temp != null ? `${s.temp.toFixed(1)}°C` : "—";
+}
+
 function formatHistoryPWM(v: number | null | undefined): string {
     if (v == null || !Number.isFinite(v)) return "—";
     return `${Math.round(v)}`;
@@ -1101,6 +1154,9 @@ function historyTooltipFormatter(params: unknown): string {
                     : null;
                 return `${dot}${it.seriesName}: ${formatHistoryPWMPercent(val)} · ${formatHistoryRPM(rpm)}`;
             }
+            if (seriesId.startsWith("volt:") || historyView === "volt") {
+                return `${dot}${it.seriesName}: ${formatHistoryVolt(val)}`;
+            }
             return `${dot}${it.seriesName}: ${formatHistoryTemp(val)}`;
         })
         .filter((line): line is string => line != null);
@@ -1120,8 +1176,10 @@ function historyChartTooltip() {
 function applyHistoryViewUI() {
     const sensorsWrap = document.getElementById("history-sensors-wrap");
     const fansWrap = document.getElementById("history-fans-wrap");
+    const voltsWrap = document.getElementById("history-volts-wrap");
     sensorsWrap?.classList.toggle("hidden", historyView !== "temp");
     fansWrap?.classList.toggle("hidden", historyView !== "fan");
+    voltsWrap?.classList.toggle("hidden", historyView !== "volt");
     if (historyView !== "temp") {
         document.getElementById("history-sensor-dropdown")?.classList.add("hidden");
         document.getElementById("history-sensors-chevron")?.setAttribute("icon", "mdi:chevron-down");
@@ -1129,6 +1187,10 @@ function applyHistoryViewUI() {
     if (historyView !== "fan") {
         document.getElementById("history-fan-dropdown")?.classList.add("hidden");
         document.getElementById("history-fans-chevron")?.setAttribute("icon", "mdi:chevron-down");
+    }
+    if (historyView !== "volt") {
+        document.getElementById("history-volt-dropdown")?.classList.add("hidden");
+        document.getElementById("history-volts-chevron")?.setAttribute("icon", "mdi:chevron-down");
     }
     document.querySelectorAll<HTMLButtonElement>("#history-view-tabs [data-history-view]").forEach(btn => {
         const active = btn.dataset.historyView === historyView;
@@ -1287,6 +1349,25 @@ function computeTempYAxisRange(h: HistorySeries, hidden: Set<string>): {min: num
     };
 }
 
+/** 电压页 Y 轴：按已选电压序列自适应（单位 V） */
+function computeVoltYAxisRange(h: HistorySeries, hidden: Set<string>): {min: number; max: number} {
+    let dataMin = Infinity;
+    let dataMax = -Infinity;
+    for (const id of historyVoltSelected) {
+        if (hidden.has(id)) continue;
+        const s = historyPointsStats(h.sensors?.[id]);
+        dataMin = Math.min(dataMin, s.min);
+        dataMax = Math.max(dataMax, s.max);
+    }
+    if (!isFinite(dataMin) || !isFinite(dataMax)) {
+        return {min: 0, max: 15};
+    }
+    const pad = Math.max(0.05, (dataMax - dataMin) * 0.08);
+    const min = Math.max(0, Math.floor((dataMin - pad) * 20) / 20);
+    const max = Math.ceil((dataMax + pad) * 20) / 20;
+    return {min, max: max > min ? max : min + 1};
+}
+
 const HISTORY_LINE_DEFAULTS = {
     type: "line" as const,
     smooth: true,
@@ -1343,7 +1424,7 @@ function updateHistoryChart() {
             historyLineSeries("disk_avg", "硬盘平均", h.disk_avg, HISTORY_COLOR_DISK),
         );
         for (const s of telemetry?.sensors ?? []) {
-            if (hidden.has(s.id) || !historySensorSelected.has(s.id)) continue;
+            if (!isTempSensor(s) || hidden.has(s.id) || !historySensorSelected.has(s.id)) continue;
             const pts = h.sensors?.[s.id];
             if (!pts?.length) continue;
             series.push(historyLineSeries(`sensor:${s.id}`, getSensorDisplayName(s.id), pts, sensorHistoryColor(s.id)));
@@ -1353,6 +1434,20 @@ function updateHistoryChart() {
             min: yMin,
             max: yMax,
             axisLabel: {formatter: (v: number) => `${v.toFixed(0)}°`, margin: 8},
+        };
+    } else if (historyView === "volt") {
+        const {min: yMin, max: yMax} = computeVoltYAxisRange(h, hidden);
+        for (const s of telemetry?.sensors ?? []) {
+            if (!isVoltSensor(s) || hidden.has(s.id) || !historyVoltSelected.has(s.id)) continue;
+            const pts = h.sensors?.[s.id];
+            if (!pts?.length) continue;
+            series.push(historyLineSeries(`volt:${s.id}`, getSensorDisplayName(s.id), pts, sensorHistoryColor(s.id)));
+        }
+        yAxis = {
+            ...HISTORY_Y_AXIS_BASE,
+            min: yMin,
+            max: yMax,
+            axisLabel: {formatter: (v: number) => `${v.toFixed(2)}V`, margin: 8},
         };
     } else {
         for (const fan of config.fans ?? []) {
@@ -1419,7 +1514,13 @@ function renderHistoryLegend() {
         );
         // 与曲线一致：按 telemetry.sensors 顺序
         for (const s of telemetry?.sensors ?? []) {
-            if (hidden.has(s.id) || !historySensorSelected.has(s.id)) continue;
+            if (!isTempSensor(s) || hidden.has(s.id) || !historySensorSelected.has(s.id)) continue;
+            items.push({name: getSensorDisplayName(s.id), color: sensorHistoryColor(s.id)});
+        }
+    } else if (historyView === "volt") {
+        const hidden = new Set(config.global.sensor_hidden ?? []);
+        for (const s of telemetry?.sensors ?? []) {
+            if (!isVoltSensor(s) || hidden.has(s.id) || !historyVoltSelected.has(s.id)) continue;
             items.push({name: getSensorDisplayName(s.id), color: sensorHistoryColor(s.id)});
         }
     } else {
@@ -1452,10 +1553,18 @@ function updateHistoryFansButtonLabel() {
     label.textContent = n > 0 ? `风扇 (${n})` : "风扇";
 }
 
+function updateHistoryVoltsButtonLabel() {
+    const label = document.getElementById("history-volts-toggle-label");
+    if (!label) return;
+    const n = historyVoltSelected.size;
+    label.textContent = n > 0 ? `电压 (${n})` : "电压";
+}
+
 /** 遥测推送时：仅在下拉打开时重建列表，避免每秒重绘 */
 function refreshHistorySelectorsFromTelemetry() {
     const sensorsDropdown = document.getElementById("history-sensor-dropdown");
     const fansDropdown = document.getElementById("history-fan-dropdown");
+    const voltsDropdown = document.getElementById("history-volt-dropdown");
     if (sensorsDropdown && !sensorsDropdown.classList.contains("hidden")) {
         renderHistorySensorToggles();
     } else {
@@ -1466,13 +1575,18 @@ function refreshHistorySelectorsFromTelemetry() {
     } else {
         updateHistoryFansButtonLabel();
     }
+    if (voltsDropdown && !voltsDropdown.classList.contains("hidden")) {
+        renderHistoryVoltToggles();
+    } else {
+        updateHistoryVoltsButtonLabel();
+    }
 }
 
 function renderHistorySensorToggles() {
     const root = document.getElementById("history-sensor-toggles");
     if (!root) return;
     const hidden = new Set(config.global.sensor_hidden ?? []);
-    const sensors = (telemetry?.sensors ?? []).filter(s => !hidden.has(s.id));
+    const sensors = (telemetry?.sensors ?? []).filter(s => isTempSensor(s) && !hidden.has(s.id));
     if (sensors.length === 0) {
         root.innerHTML = `<span class="text-xs text-slate-500">暂无可用传感器</span>`;
         updateHistorySensorsButtonLabel();
@@ -1494,6 +1608,35 @@ function renderHistorySensorToggles() {
         </button>`;
     }).join("");
     updateHistorySensorsButtonLabel();
+    renderHistoryLegend();
+}
+
+function renderHistoryVoltToggles() {
+    const root = document.getElementById("history-volt-toggles");
+    if (!root) return;
+    const hidden = new Set(config.global.sensor_hidden ?? []);
+    const sensors = (telemetry?.sensors ?? []).filter(s => isVoltSensor(s) && !hidden.has(s.id));
+    if (sensors.length === 0) {
+        root.innerHTML = `<span class="text-xs text-slate-500">暂无可用电压传感器</span>`;
+        updateHistoryVoltsButtonLabel();
+        renderHistoryLegend();
+        return;
+    }
+    root.innerHTML = sensors.map(s => {
+        const color = sensorHistoryColor(s.id);
+        const name = getSensorDisplayName(s.id);
+        const on = historyVoltSelected.has(s.id);
+        return `<button type="button" data-history-volt="${esc(s.id)}"
+            class="w-full inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-left border transition-colors ${
+            on
+                ? "border-slate-500 bg-slate-700/80 text-slate-100"
+                : "border-transparent bg-slate-800/40 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+        }">
+            <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${esc(color)}"></span>
+            <span class="truncate flex-1" title="${esc(name)}">${esc(name)}</span>
+        </button>`;
+    }).join("");
+    updateHistoryVoltsButtonLabel();
     renderHistoryLegend();
 }
 
@@ -1546,7 +1689,7 @@ function setupHistoryRangeControls() {
         const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-history-view]");
         if (!btn) return;
         const view = btn.dataset.historyView as HistoryView | undefined;
-        if (view === "temp" || view === "fan") setHistoryView(view);
+        if (view === "temp" || view === "fan" || view === "volt") setHistoryView(view);
     });
 
     const now = new Date();
@@ -1576,11 +1719,24 @@ function setupHistoryRangeControls() {
     const sensorsPanel = document.getElementById("history-sensor-toggles");
     const sensorsChevron = document.getElementById("history-sensors-chevron");
 
+    const closeHistoryDropdowns = (except?: "sensors" | "fans" | "volts") => {
+        if (except !== "sensors") {
+            sensorsDropdown?.classList.add("hidden");
+            if (sensorsChevron) sensorsChevron.setAttribute("icon", "mdi:chevron-down");
+        }
+        if (except !== "fans") {
+            document.getElementById("history-fan-dropdown")?.classList.add("hidden");
+            document.getElementById("history-fans-chevron")?.setAttribute("icon", "mdi:chevron-down");
+        }
+        if (except !== "volts") {
+            document.getElementById("history-volt-dropdown")?.classList.add("hidden");
+            document.getElementById("history-volts-chevron")?.setAttribute("icon", "mdi:chevron-down");
+        }
+    };
+
     sensorsToggle?.addEventListener("click", e => {
         e.stopPropagation();
-        document.getElementById("history-fan-dropdown")?.classList.add("hidden");
-        const fansChevron = document.getElementById("history-fans-chevron");
-        if (fansChevron) fansChevron.setAttribute("icon", "mdi:chevron-down");
+        closeHistoryDropdowns("sensors");
         const hidden = sensorsDropdown?.classList.toggle("hidden") ?? true;
         if (sensorsChevron) {
             sensorsChevron.setAttribute("icon", hidden ? "mdi:chevron-down" : "mdi:chevron-up");
@@ -1596,13 +1752,28 @@ function setupHistoryRangeControls() {
 
     fansToggle?.addEventListener("click", e => {
         e.stopPropagation();
-        sensorsDropdown?.classList.add("hidden");
-        if (sensorsChevron) sensorsChevron.setAttribute("icon", "mdi:chevron-down");
+        closeHistoryDropdowns("fans");
         const hidden = fansDropdown?.classList.toggle("hidden") ?? true;
         if (fansChevron) {
             fansChevron.setAttribute("icon", hidden ? "mdi:chevron-down" : "mdi:chevron-up");
         }
         if (!hidden) renderHistoryFanToggles();
+    });
+
+    const voltsWrap = document.getElementById("history-volts-wrap");
+    const voltsToggle = document.getElementById("history-volts-toggle");
+    const voltsDropdown = document.getElementById("history-volt-dropdown");
+    const voltsPanel = document.getElementById("history-volt-toggles");
+    const voltsChevron = document.getElementById("history-volts-chevron");
+
+    voltsToggle?.addEventListener("click", e => {
+        e.stopPropagation();
+        closeHistoryDropdowns("volts");
+        const hidden = voltsDropdown?.classList.toggle("hidden") ?? true;
+        if (voltsChevron) {
+            voltsChevron.setAttribute("icon", hidden ? "mdi:chevron-down" : "mdi:chevron-up");
+        }
+        if (!hidden) renderHistoryVoltToggles();
     });
 
     document.addEventListener("click", e => {
@@ -1614,6 +1785,10 @@ function setupHistoryRangeControls() {
         if (fansDropdown && !fansDropdown.classList.contains("hidden") && !fansWrap?.contains(target)) {
             fansDropdown.classList.add("hidden");
             if (fansChevron) fansChevron.setAttribute("icon", "mdi:chevron-down");
+        }
+        if (voltsDropdown && !voltsDropdown.classList.contains("hidden") && !voltsWrap?.contains(target)) {
+            voltsDropdown.classList.add("hidden");
+            if (voltsChevron) voltsChevron.setAttribute("icon", "mdi:chevron-down");
         }
     });
 
@@ -1637,6 +1812,18 @@ function setupHistoryRangeControls() {
         if (historyFanSelected.has(id)) historyFanSelected.delete(id);
         else historyFanSelected.add(id);
         renderHistoryFanToggles();
+        updateHistoryChart();
+        void persistHistoryPrefs();
+    });
+
+    voltsPanel?.addEventListener("click", e => {
+        const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-history-volt]");
+        if (!btn) return;
+        e.stopPropagation();
+        const id = btn.dataset.historyVolt!;
+        if (historyVoltSelected.has(id)) historyVoltSelected.delete(id);
+        else historyVoltSelected.add(id);
+        renderHistoryVoltToggles();
         updateHistoryChart();
         void persistHistoryPrefs();
     });
@@ -1935,20 +2122,27 @@ function renderSensorMgrTable() {
     const aliases = config.global.sensor_aliases ?? {};
     const hiddenSet = new Set(config.global.sensor_hidden ?? []);
     if (sensors.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-slate-500">暂无传感器数据（等待后端推送）</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-slate-500">暂无传感器数据（等待后端推送）</td></tr>`;
         return;
     }
     tbody.innerHTML = sensors.map(s => {
         const chipLabel = s.device ? `${s.chip} · ${s.device}` : s.chip;
         const label = s.label || s.key;
-        const temp = s.temp != null ? `${s.temp.toFixed(1)}°C` : "—";
+        const kindLabel = isVoltSensor(s) ? "电压" : "温度";
+        const kindCls = isVoltSensor(s)
+            ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+            : "bg-sky-500/15 text-sky-300 border-sky-500/30";
+        const reading = formatSensorReading(s);
         const alias = aliases[s.id] ?? "";
         const hidden = hiddenSet.has(s.id);
         return `
 <tr class="border-b border-slate-700/30 ${hidden ? "opacity-50" : ""}" data-sensor-id="${esc(s.id)}">
     <td class="p-2 text-sky-400 font-mono whitespace-nowrap">${esc(chipLabel)}</td>
     <td class="p-2 text-slate-300 whitespace-nowrap">${esc(label)}</td>
-    <td class="p-2 font-mono tabular-nums text-slate-400">${esc(temp)}</td>
+    <td class="p-2 whitespace-nowrap">
+        <span class="inline-block px-1.5 py-0.5 rounded border text-[10px] ${kindCls}">${kindLabel}</span>
+    </td>
+    <td class="p-2 font-mono tabular-nums text-slate-400" data-sensor-reading>${esc(reading)}</td>
     <td class="p-2">
         <input type="text" data-sensor-alias
                class="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder-slate-600"
@@ -1995,8 +2189,8 @@ function updateSensorMgrTemps() {
     rows.forEach(row => {
         const id = row.dataset.sensorId!;
         const s = sensorMap.get(id);
-        const td = row.children[2] as HTMLElement | undefined;
-        if (td) td.textContent = s?.temp != null ? `${s.temp.toFixed(1)}°C` : "—";
+        const td = row.querySelector<HTMLElement>("[data-sensor-reading]");
+        if (td) td.textContent = s ? formatSensorReading(s) : "—";
     });
 }
 
@@ -2004,7 +2198,7 @@ function updateSensorMgrTemps() {
 function renderCPUGPUSensorMenu(type: "cpu" | "gpu"): string {
     const sensors = telemetry?.sensors ?? [];
     const current = type === "cpu" ? (config.global.cpu_sensor || "") : (config.global.gpu_sensor || "");
-    const items = sensors.filter(s => !config.global.sensor_hidden?.includes(s.id));
+    const items = sensors.filter(s => isTempSensor(s) && !config.global.sensor_hidden?.includes(s.id));
 
     let html = `
 <div class="px-3 py-2 text-xs text-slate-400 border-b border-slate-700/50">
@@ -2635,6 +2829,7 @@ async function refresh() {
     applyHistoryPrefsFromConfig();
     renderHistorySensorToggles();
     renderHistoryFanToggles();
+    renderHistoryVoltToggles();
     loadHistoryChart().catch(console.error);
 }
 

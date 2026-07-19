@@ -56,6 +56,7 @@ export interface GlobalConfig {
     history_range?: HistoryRange;
     history_sensors?: string[] | null;
     history_fans?: string[] | null;
+    history_volts?: string[] | null;
     history_from?: string;
     history_to?: string;
 }
@@ -66,7 +67,10 @@ export interface SensorReading {
     device?: string;
     key: string;
     label: string;
+    /** temp | volt；缺省视为 temp（兼容旧后端） */
+    kind?: "temp" | "volt";
     temp?: number;
+    volt?: number;
 }
 
 export interface ConfigPayload {

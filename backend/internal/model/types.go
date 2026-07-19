@@ -84,6 +84,7 @@ type GlobalConfig struct {
 	HistoryRange     string            `json:"history_range,omitempty"`  // 温度历史图时间范围：1h/6h/24h/7d/custom
 	HistorySensors   []string          `json:"history_sensors"`          // 历史曲线温度页选中的传感器；null=未配置，[]=全不选
 	HistoryFans      []string          `json:"history_fans"`             // 历史曲线风扇页选中的风扇 ID；null=未配置，[]=全不选
+	HistoryVolts     []string          `json:"history_volts"`            // 历史曲线电压页选中的电压传感器；null=未配置，[]=全不选
 	HistoryFrom      string            `json:"history_from,omitempty"`   // 自定义范围起始（datetime-local）
 	HistoryTo        string            `json:"history_to,omitempty"`     // 自定义范围结束（datetime-local）
 }
@@ -134,13 +135,20 @@ type Telemetry struct {
 	Timestamp      time.Time       `json:"timestamp"`
 }
 
+const (
+	SensorKindTemp = "temp"
+	SensorKindVolt = "volt"
+)
+
 type SensorReading struct {
 	ID     string   `json:"id"`               // chip/device/key，全局稳定 ID
 	Chip   string   `json:"chip"`             // 来自 hwmonX/name
 	Device string   `json:"device,omitempty"` // 来自 hwmonX/device 软链终端：nvme0、sda、PCI 地址等
-	Key    string   `json:"key"`              // 例：temp1
-	Label  string   `json:"label"`            // 来自 tempN_label，可能为空
-	Temp   *float64 `json:"temp,omitempty"`
+	Key    string   `json:"key"`              // 例：temp1 / in1
+	Label  string   `json:"label"`            // 来自 *_label，可能为空
+	Kind   string   `json:"kind"`             // temp | volt
+	Temp   *float64 `json:"temp,omitempty"`   // °C（kind=temp）
+	Volt   *float64 `json:"volt,omitempty"`   // V（kind=volt）
 }
 
 type HistoryPoint struct {
