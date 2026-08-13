@@ -86,32 +86,38 @@ jobs:
           fnpack build
           mv *.fpk "dist/FanControlServer-${{ steps.get_version.outputs.VERSION }}-linux-amd64-iframe.fpk"
 
+      # ========================================================================
+      # 以下为 arm64 构建步骤（已注释，如需恢复请取消注释）
+      # ========================================================================
+
       # --- 构建 arm64 后端 ---
-      - name: Build Backend (arm64)
-        run: |
-          cd backend
-          VER="${{ steps.get_version.outputs.VERSION }}"
-          VER="${VER#v}"
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath \
-            -ldflags "-s -w -X fancontrolserver/internal/version.Version=${VER}" \
-            -o ../app/server/fancontrolserver .
+      # - name: Build Backend (arm64)
+      #   run: |
+      #     cd backend
+      #     VER="${{ steps.get_version.outputs.VERSION }}"
+      #     VER="${VER#v}"
+      #     GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath \
+      #       -ldflags "-s -w -X fancontrolserver/internal/version.Version=${VER}" \
+      #       -o ../app/server/fancontrolserver .
 
       # --- 打包 arm64（platform 设为 arm） ---
-      - name: Build arm64 URL Version
-        run: |
-          cp app/ui/config.bak app/ui/config   # url 模式
-          cp manifest.bak manifest
-          sed -i 's/^platform\s*=.*/platform = arm/' manifest
-          fnpack build
-          mv *.fpk "dist/FanControlServer-${{ steps.get_version.outputs.VERSION }}-linux-arm64-url.fpk"
+      # - name: Build arm64 URL Version
+      #   run: |
+      #     cp app/ui/config.bak app/ui/config   # url 模式
+      #     cp manifest.bak manifest
+      #     sed -i 's/^platform\s*=.*/platform = arm/' manifest
+      #     fnpack build
+      #     mv *.fpk "dist/FanControlServer-${{ steps.get_version.outputs.VERSION }}-linux-arm64-url.fpk"
 
-      - name: Build arm64 Iframe Version
-        run: |
-          cp manifest.bak manifest
-          sed -i 's/^platform\s*=.*/platform = arm/' manifest
-          sed -i 's/"type": "url"/"type": "iframe"/' app/ui/config
-          fnpack build
-          mv *.fpk "dist/FanControlServer-${{ steps.get_version.outputs.VERSION }}-linux-arm64-iframe.fpk"
+      # - name: Build arm64 Iframe Version
+      #   run: |
+      #     cp manifest.bak manifest
+      #     sed -i 's/^platform\s*=.*/platform = arm/' manifest
+      #     sed -i 's/"type": "url"/"type": "iframe"/' app/ui/config
+      #     fnpack build
+      #     mv *.fpk "dist/FanControlServer-${{ steps.get_version.outputs.VERSION }}-linux-arm64-iframe.fpk"
+
+      # ========================================================================
 
       - name: Create Release and Upload Assets
         uses: softprops/action-gh-release@v2

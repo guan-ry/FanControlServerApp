@@ -1,0 +1,19 @@
+[
+  {
+    "stepTitle": "应用设置",
+    "items": [
+      {
+        "type": "text",
+        "field": "wizard_start_delay",
+        "label": "启动延时 (秒)",
+        "initValue": "5",
+        "rules": [
+          { "required": true, "message": "请输入启动延时" },
+          { "pattern": "^[0-9]+$", "message": "请输入正整数" },
+          { "validator": "(value) => value >= 0 && value <= 600", "message": "延时需在0~600秒之间" }
+        ],
+        "helpText": "应用启动前等待的秒数，默认为5秒，最大10分钟（600秒）。"
+      }
+    ]
+  }
+]
